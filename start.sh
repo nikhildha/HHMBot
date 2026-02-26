@@ -1,22 +1,15 @@
 #!/bin/bash
 # ── SENTINEL Startup Script ──────────────────────────────────────────
-# Runs both the Python bot engine and Node.js dashboard in one container.
+# Only starts the Node.js dashboard. The Python bot engine is started
+# via the "Start Engine" button on the dashboard (spawns main.py).
 
 set -e
 
-echo "🚀 Starting SENTINEL..."
+echo "🚀 Starting SENTINEL Dashboard..."
 
 # Ensure data directory exists
 mkdir -p /app/data
 
-# Start Python bot engine in background
-echo "🐍 Starting bot engine (main.py)..."
-cd /app
-python -u main.py &
-BOT_PID=$!
-echo "   Bot PID: $BOT_PID"
-
-# Start Node.js dashboard in foreground
-echo "🌐 Starting dashboard (server.js)..."
+# Start Node.js dashboard (the bot is started via the UI)
 cd /app/web-dashboard
 exec node server.js

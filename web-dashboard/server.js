@@ -1215,22 +1215,112 @@ except Exception as e:
     }
 });
 
-// ─── Engine Pause/Start Control ──────────────────────────────────────────────
+// ─── Engine Process Manager ─────────────────────────────────────────────────
 const ENGINE_STATE_FILE = path.join(DATA_DIR, 'engine_state.json');
+let botProcess = null;  // child_process reference
 
 function getEngineState() {
+    // If we have a live process, report running; otherwise check if it crashed
+    if (botProcess && !botProcess.killed) {
+        return { status: 'running', pid: botProcess.pid, started_at: botProcess._startedAt || null };
+    }
     try {
         if (fs.existsSync(ENGINE_STATE_FILE)) {
             return JSON.parse(fs.readFileSync(ENGINE_STATE_FILE, 'utf8'));
         }
     } catch (e) { }
-    return { status: 'running', paused_at: null, paused_by: null };
+    return { status: 'stopped', pid: null };
 }
 
 function setEngineState(state) {
     fs.writeFileSync(ENGINE_STATE_FILE, JSON.stringify(state, null, 2));
-    // Broadcast to all connected clients
     io.emit('engine_state', state);
+}
+
+function startEngine() {
+    if (botProcess && !botProcess.killed) {
+        return { success: false, error: 'Engine is already running', state: getEngineState() };
+    }
+
+    const projectRoot = path.join(__dirname, '..');
+    const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
+    const pythonPath = fs.existsSync(venvPython) ? venvPython : 'python3';
+    const scriptPath = path.join(projectRoot, 'main.py');
+
+    console.log(`[Engine] 🚀 Starting bot engine: ${pythonPath} ${scriptPath}`);
+
+    botProcess = require('child_process').spawn(pythonPath, ['-u', scriptPath], {
+        cwd: projectRoot,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    botProcess._startedAt = new Date().toISOString();
+
+    // Pipe stdout/stderr to bot.log for the file watcher to pick up
+    const logFile = path.join(DATA_DIR, 'bot.log');
+    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+    botProcess.stdout.on('data', (data) => {
+        logStream.write(data);
+        // Also emit to connected clients for real-time logs
+        const lines = data.toString().split('\n').filter(l => l.trim());
+        lines.forEach(l => io.emit('log-line', l));
+    });
+
+    botProcess.stderr.on('data', (data) => {
+        logStream.write(data);
+        const lines = data.toString().split('\n').filter(l => l.trim());
+        lines.forEach(l => io.emit('log-line', `[STDERR] ${l}`));
+    });
+
+    botProcess.on('close', (code) => {
+        console.log(`[Engine] ⚠️ Bot process exited with code ${code}`);
+        const state = {
+            status: 'stopped',
+            pid: null,
+            stopped_at: new Date().toISOString(),
+            exit_code: code,
+            reason: code === 0 ? 'normal' : 'crashed',
+        };
+        setEngineState(state);
+        botProcess = null;
+        logStream.end();
+    });
+
+    const state = {
+        status: 'running',
+        pid: botProcess.pid,
+        started_at: botProcess._startedAt,
+    };
+    setEngineState(state);
+    return { success: true, state };
+}
+
+function stopEngine() {
+    if (!botProcess || botProcess.killed) {
+        return { success: false, error: 'Engine is not running', state: getEngineState() };
+    }
+
+    console.log(`[Engine] ⏹ Stopping bot engine (PID ${botProcess.pid})...`);
+    botProcess.kill('SIGTERM');
+
+    // Force kill after 5 seconds if it doesn't stop
+    setTimeout(() => {
+        if (botProcess && !botProcess.killed) {
+            console.log('[Engine] ⚠️ Force killing bot process...');
+            botProcess.kill('SIGKILL');
+        }
+    }, 5000);
+
+    const state = {
+        status: 'stopped',
+        pid: null,
+        stopped_at: new Date().toISOString(),
+        reason: 'user',
+    };
+    setEngineState(state);
+    return { success: true, state };
 }
 
 app.get('/api/engine/state', (req, res) => {
@@ -1239,16 +1329,15 @@ app.get('/api/engine/state', (req, res) => {
 
 app.post('/api/engine/toggle', (req, res) => {
     const current = getEngineState();
-    const newStatus = current.status === 'running' ? 'paused' : 'running';
-    const newState = {
-        status: newStatus,
-        paused_at: newStatus === 'paused' ? new Date().toISOString() : null,
-        resumed_at: newStatus === 'running' ? new Date().toISOString() : null,
-        paused_by: 'dashboard',
-    };
-    setEngineState(newState);
-    console.log(`[Engine] 🔄 Engine ${newStatus.toUpperCase()} via dashboard`);
-    res.json({ success: true, state: newState });
+    if (current.status === 'running') {
+        const result = stopEngine();
+        console.log('[Engine] 🔄 Engine STOPPED via dashboard');
+        res.json(result);
+    } else {
+        const result = startEngine();
+        console.log('[Engine] 🔄 Engine STARTED via dashboard');
+        res.json(result);
+    }
 });
 
 // ─── Config API (reads config.py for settings page) ──────────────────────────

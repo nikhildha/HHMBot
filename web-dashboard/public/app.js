@@ -937,12 +937,12 @@ socket.on('trigger-ack', (data) => {
 function updateEngineButton(state) {
     const btn = document.getElementById('engineToggleBtn');
     if (!btn) return;
-    if (state.status === 'paused') {
+    if (state.status !== 'running') {
         btn.innerHTML = '▶️ Start Engine';
         btn.style.background = 'linear-gradient(135deg, #22C55E, #16A34A)';
     } else {
-        btn.innerHTML = '⏸️ Pause Engine';
-        btn.style.background = 'linear-gradient(135deg, #F59E0B, #D97706)';
+        btn.innerHTML = '⏹️ Stop Engine';
+        btn.style.background = 'linear-gradient(135deg, #EF4444, #DC2626)';
     }
 }
 
@@ -952,8 +952,8 @@ async function toggleEngine() {
         const data = await res.json();
         if (data.success) {
             updateEngineButton(data.state);
-            const action = data.state.status === 'paused' ? '⏸️ Engine PAUSED' : '▶️ Engine RUNNING';
-            showToast(action, data.state.status === 'paused' ? 'error' : 'success');
+            const action = data.state.status === 'running' ? '▶️ Engine STARTED' : '⏹️ Engine STOPPED';
+            showToast(action, data.state.status === 'running' ? 'success' : 'error');
         }
     } catch (e) {
         showToast('Failed to toggle engine', 'error');
