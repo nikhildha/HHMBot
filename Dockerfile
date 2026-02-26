@@ -1,40 +1,35 @@
-# ── Stage 1: Python Bot ──────────────────────────────────────────────
-FROM python:3.11-slim AS bot
+# ── Unified Image: Python Bot + Node.js Dashboard ─────────────────────
+FROM python:3.11-slim
+
+# Install Node.js 20
+RUN apt-get update && apt-get install -y curl && \
+     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+     apt-get install -y nodejs && \
+     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies
+# ── Python dependencies ──────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy bot source code
-COPY main.py config.py data_pipeline.py execution_engine.py \
-     feature_engine.py hmm_brain.py risk_manager.py \
-     coin_scanner.py sideways_strategy.py tradebook.py \
-     backtest.py backtester.py ./
+# ── Node.js dependencies ─────────────────────────────────────────────
+COPY web-dashboard/package*.json ./web-dashboard/
+RUN cd web-dashboard && npm install --production
 
-# Data directory (mounted as volume)
+# ── Copy all source code ─────────────────────────────────────────────
+COPY . .
+
+# ── Data directory ───────────────────────────────────────────────────
 RUN mkdir -p /app/data
 
-CMD ["python", "-u", "main.py"]
-
-
-# ── Stage 2: Node.js Dashboard ──────────────────────────────────────
-FROM node:20-slim AS dashboard
-
-WORKDIR /app/web-dashboard
-
-COPY web-dashboard/package*.json ./
-RUN npm install --production
-
-COPY web-dashboard/ ./
-
-# Data directory will be mounted
-RUN mkdir -p /app/data
-
+# ── Environment ──────────────────────────────────────────────────────
 ENV DATA_DIR=/app/data
 ENV PORT=3001
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 3001
 
+# ── Start: Dashboard server (bot is started from Deploy page) ────────
+WORKDIR /app/web-dashboard
 CMD ["node", "server.js"]
