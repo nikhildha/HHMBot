@@ -940,7 +940,9 @@ app.post('/api/backtest', (req, res) => {
 
     // Spawn Python backtest with streaming
     const projectRoot = path.join(__dirname, '..');
-    const pythonPath = path.join(projectRoot, '.venv', 'bin', 'python3');
+    // Use .venv python if available (local dev), otherwise system python3
+    const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
+    const pythonPath = fs.existsSync(venvPython) ? venvPython : 'python3';
     const scriptPath = path.join(projectRoot, 'backtest.py');
 
     const child = require('child_process').spawn(pythonPath, [scriptPath, '--server', paramPath], {

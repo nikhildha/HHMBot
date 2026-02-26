@@ -20,6 +20,9 @@ RUN cd web-dashboard && npm install --production
 # ── Copy all source code ─────────────────────────────────────────────
 COPY . .
 
+# ── Make startup script executable ───────────────────────────────────
+RUN chmod +x /app/start.sh
+
 # ── Data directory ───────────────────────────────────────────────────
 RUN mkdir -p /app/data
 
@@ -30,6 +33,5 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 3001
 
-# ── Start: Dashboard server (bot is started from Deploy page) ────────
-WORKDIR /app/web-dashboard
-CMD ["node", "server.js"]
+# ── Start both Python bot + Node dashboard ───────────────────────────
+CMD ["/app/start.sh"]
