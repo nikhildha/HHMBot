@@ -39,7 +39,7 @@ TIMEFRAME_MACRO = "4h"        # Macro regime
 HMM_N_STATES = 4              # Bull, Bear, Chop, Crash
 HMM_COVARIANCE = "full"       # Optimized: captures cross-feature correlations
 HMM_ITERATIONS = 100
-HMM_LOOKBACK = 500            # Candles used for training
+HMM_LOOKBACK = 250            # Candles used for training (reduced for speed)
 HMM_RETRAIN_HOURS = 24        # Retrain every N hours
 
 # ─── Regime Labels (assigned post-training by sorting mean returns) ──────────
@@ -126,9 +126,9 @@ ANALYSIS_INTERVAL_SECONDS = 900   # 15-minute full analysis cycle (HMM scan, tra
 ERROR_RETRY_SECONDS = 60          # Retry after error
 
 # ─── Multi-Coin Trading ──────────────────────────────────────────────────────────
-MAX_CONCURRENT_POSITIONS = 25   # Max symbols traded at once
-TOP_COINS_LIMIT = 50            # How many coins to scan
-CAPITAL_PER_COIN_PCT = 0.03     # 3% of balance per coin (max 25 = 75% deployed)
+MAX_CONCURRENT_POSITIONS = 15   # Max symbols traded at once
+TOP_COINS_LIMIT = 15            # How many coins to scan (reduced from 50 for speed)
+CAPITAL_PER_COIN_PCT = 0.05     # 5% of balance per coin (max 15 = 75% deployed)
 SCAN_INTERVAL_CYCLES = 4        # Re-scan top coins every N analysis cycles (4 × 15m = 1h)
 MULTI_COIN_MODE = True          # Enable multi-coin scanning
 
