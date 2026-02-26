@@ -80,17 +80,39 @@ class RegimeMasterBot:
             config.LOOP_INTERVAL_SECONDS, config.ANALYSIS_INTERVAL_SECONDS,
         )
 
+        consecutive_errors = 0
         while True:
             try:
                 self._heartbeat()
+                consecutive_errors = 0  # Reset on success
                 time.sleep(config.LOOP_INTERVAL_SECONDS)
 
             except KeyboardInterrupt:
                 logger.info("⏹ Bot stopped by user.")
                 break
             except Exception as e:
-                logger.error("⚠️ Loop error: %s", e, exc_info=True)
-                time.sleep(config.ERROR_RETRY_SECONDS)
+                consecutive_errors += 1
+                logger.error("⚠️ Loop error (#%d): %s", consecutive_errors, e, exc_info=True)
+                # Save crash info for dashboard visibility
+                try:
+                    import traceback as _tb
+                    crash_info = {
+                        "engine_status": "ERROR",
+                        "last_error": f"Loop error #{consecutive_errors}: {str(e)[:500]}",
+                        "last_error_time": datetime.utcnow().isoformat() + "Z",
+                        "last_error_traceback": _tb.format_exc()[-1000:],
+                    }
+                    if os.path.exists(config.MULTI_STATE_FILE):
+                        with open(config.MULTI_STATE_FILE, "r") as f:
+                            state = json.load(f)
+                        state.update(crash_info)
+                        with open(config.MULTI_STATE_FILE, "w") as f:
+                            json.dump(state, f, indent=2)
+                except Exception:
+                    pass
+                backoff = min(config.ERROR_RETRY_SECONDS * consecutive_errors, 300)
+                logger.info("⏳ Retrying in %ds...", backoff)
+                time.sleep(backoff)
 
     def _heartbeat(self):
         """1-minute heartbeat: lightweight checks + trigger full analysis on schedule."""
@@ -174,7 +196,23 @@ class RegimeMasterBot:
         elapsed = now - self._last_analysis_time
         if force or elapsed >= config.ANALYSIS_INTERVAL_SECONDS:
             logger.info("🧠 Running full analysis cycle (%.0fs since last)...", elapsed)
-            self._tick()
+            try:
+                self._tick()
+            except Exception as e:
+                logger.error("💥 TICK CRASH (engine survived): %s", e, exc_info=True)
+                # Save error to dashboard state so user can see what happened
+                try:
+                    import traceback as _tb
+                    if os.path.exists(config.MULTI_STATE_FILE):
+                        with open(config.MULTI_STATE_FILE, "r") as f:
+                            state = json.load(f)
+                        state["last_error"] = f"Tick crash: {str(e)[:500]}"
+                        state["last_error_time"] = datetime.utcnow().isoformat() + "Z"
+                        state["last_error_traceback"] = _tb.format_exc()[-1000:]
+                        with open(config.MULTI_STATE_FILE, "w") as f:
+                            json.dump(state, f, indent=2)
+                except Exception:
+                    pass
             self._last_analysis_time = time.time()
             self._save_timing()  # Update timing for dashboard
         else:
@@ -248,7 +286,12 @@ class RegimeMasterBot:
                 if result:
                     eligible_trades.append(result)
             except Exception as e:
-                logger.debug("Error analyzing %s: %s", symbol, e)
+                logger.warning("⚠️ Error analyzing %s: %s", symbol, e, exc_info=True)
+                self._coin_states[symbol] = {
+                    "symbol": symbol, "regime": "ERROR", "confidence": 0,
+                    "price": 0, "action": f"ERROR: {str(e)[:80]}",
+                    "macro_regime": None, "features": {},
+                }
                 continue
 
         # ── 5. Deploy eligible trades (respect position limit) ───
@@ -259,7 +302,7 @@ class RegimeMasterBot:
                 "📊 Position limit reached (%d/%d). No new deployments this cycle.",
                 tradebook_active_count, config.MAX_CONCURRENT_POSITIONS,
             )
-            # AUTO-HALT: 25 positions reached → pause engine for 1 hour
+            # AUTO-HALT: 15 positions reached → pause engine for 1 hour
             if tradebook_active_count >= config.MAX_CONCURRENT_POSITIONS:
                 try:
                     import json
@@ -269,9 +312,9 @@ class RegimeMasterBot:
                     halt_state = {
                         "status": "paused",
                         "paused_at": datetime.utcnow().isoformat() + "Z",
-                        "paused_by": "auto_25_cap",
+                        "paused_by": "auto_15_cap",
                         "halt_until": halt_until,
-                        "reason": f"25 active positions reached — auto-halted for 1 hour until {halt_until}",
+                        "reason": f"15 active positions reached — auto-halted for 1 hour until {halt_until}",
                     }
                     with open(state_path, "w") as f:
                         json.dump(halt_state, f, indent=2)
@@ -437,9 +480,13 @@ class RegimeMasterBot:
         df_1h_feat = compute_all_features(df_1h)
         df_1h_hmm = compute_hmm_features(df_1h)
 
-        # Train if needed
+        # Train if needed (wrapped — hmmlearn can segfault on bad data)
         if brain.needs_retrain():
-            brain.train(df_1h_hmm)
+            try:
+                brain.train(df_1h_hmm)
+            except Exception as e:
+                logger.warning("⚠️ HMM train failed for %s: %s", symbol, e)
+                return None
 
         if not brain.is_trained:
             return None
@@ -469,8 +516,19 @@ class RegimeMasterBot:
         except Exception as e:
             logger.debug("4h macro analysis failed for %s: %s", symbol, e)
 
-        # Update coin state for dashboard
+        # Update coin state for dashboard (include feature snapshot for heatmap)
         current_price = float(df_1h_feat["close"].iloc[-1])
+
+        # Extract latest HMM feature values for dashboard heatmap
+        feature_snapshot = {}
+        for feat_col in ["log_return", "volatility", "volume_change", "rsi_norm",
+                         "vwap_position", "sr_position", "oi_change", "funding_norm"]:
+            if feat_col in df_1h_hmm.columns:
+                val = df_1h_hmm[feat_col].iloc[-1]
+                feature_snapshot[feat_col] = round(float(val), 4) if not (val != val) else 0.0
+            else:
+                feature_snapshot[feat_col] = 0.0
+
         self._coin_states[symbol] = {
             "symbol": symbol,
             "regime": regime_name,
@@ -478,6 +536,7 @@ class RegimeMasterBot:
             "price": current_price,
             "action": "ANALYZING",
             "macro_regime": macro_regime_name,
+            "features": feature_snapshot,
         }
 
         # ── CRASH on either timeframe → skip ──

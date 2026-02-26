@@ -25,7 +25,140 @@ class RiskManager:
         self.equity_history = []   # List of (timestamp, balance) tuples
         self._killed = False
 
-    # ─── Dynamic Leverage ────────────────────────────────────────────────────
+    # ─── Conviction Scoring System ─────────────────────────────────────────
+
+    @staticmethod
+    def compute_conviction_score(confidence, regime, side,
+                                  btc_regime=None,
+                                  funding_rate=None,
+                                  sr_position=None,
+                                  vwap_position=None,
+                                  oi_change=None,
+                                  volatility=None):
+        """
+        Compute a multi-factor conviction score (0-100) for a trade.
+        
+        Factors (weights sum to 100):
+          1. HMM Confidence      (30%) — core model signal
+          2. BTC Macro Alignment  (25%) — does BTC agree with our trade?
+          3. Funding Rate         (15%) — is the opposite side crowded?
+          4. S/R + VWAP Position  (15%) — are we entering at a good level?
+          5. OI Momentum          (10%) — is smart money building our way?
+          6. Volatility Regime     (5%) — is vol tradeable?
+        
+        Returns
+        -------
+        float : conviction score 0-100
+        """
+        score = 0.0
+        
+        # ─── 1. HMM Confidence (30 pts max) ──────────────────────────
+        # 92% → 0pts, 96% → 15pts, 99% → 25pts, 100% → 30pts
+        if confidence >= 0.92:
+            conf_score = min(30, (confidence - 0.92) / 0.08 * 30)
+            score += conf_score
+        
+        # ─── 2. BTC Macro Alignment (25 pts max) ─────────────────────
+        if btc_regime is not None:
+            if btc_regime == config.REGIME_CRASH:
+                score -= 15  # Strong penalty — BTC crashing
+            elif side == 'LONG' and btc_regime == config.REGIME_BULL:
+                score += 25  # Perfect alignment
+            elif side == 'SHORT' and btc_regime == config.REGIME_BEAR:
+                score += 25  # Perfect alignment
+            elif side == 'LONG' and btc_regime == config.REGIME_BEAR:
+                score -= 10  # Counter-BTC — dangerous
+            elif side == 'SHORT' and btc_regime == config.REGIME_BULL:
+                score -= 10  # Counter-BTC — dangerous
+            elif btc_regime == config.REGIME_CHOP:
+                score += 5   # Neutral — slight bonus for coin-specific signal
+        else:
+            score += 10  # No BTC data → give neutral credit
+        
+        # ─── 3. Funding Rate (15 pts max) ────────────────────────────
+        if funding_rate is not None:
+            if side == 'LONG' and funding_rate < -0.0001:
+                score += 15  # Shorts crowded → squeeze potential
+            elif side == 'LONG' and funding_rate > 0.0005:
+                score -= 5   # Longs crowded → risky
+            elif side == 'SHORT' and funding_rate > 0.0003:
+                score += 15  # Longs crowded → dump potential
+            elif side == 'SHORT' and funding_rate < -0.0003:
+                score -= 5   # Shorts crowded → risky
+            else:
+                score += 7   # Neutral funding
+        else:
+            score += 7  # No data → neutral
+        
+        # ─── 4. S/R + VWAP Position (15 pts max) ─────────────────────
+        sr_score = 0
+        if sr_position is not None:
+            # sr_position: -1 = at support, +1 = at resistance
+            if side == 'LONG':
+                sr_score += max(0, (1 - sr_position) / 2 * 8)  # Closer to support = more pts
+            else:
+                sr_score += max(0, (1 + sr_position) / 2 * 8)  # Closer to resistance = more pts
+        else:
+            sr_score += 4
+        
+        if vwap_position is not None:
+            if side == 'LONG' and vwap_position < 0:
+                sr_score += 7  # Below VWAP — buying cheap
+            elif side == 'SHORT' and vwap_position > 0:
+                sr_score += 7  # Above VWAP — selling expensive
+            else:
+                sr_score += 3  # Neutral
+        else:
+            sr_score += 3
+        
+        score += min(15, sr_score)
+        
+        # ─── 5. OI Momentum (10 pts max) ─────────────────────────────
+        if oi_change is not None:
+            if side == 'LONG' and oi_change > 0.02:
+                score += 10  # OI building → conviction rising
+            elif side == 'SHORT' and oi_change < -0.02:
+                score += 10  # OI dropping → panic selling
+            elif abs(oi_change) < 0.01:
+                score += 5   # OI stable → neutral
+            else:
+                score += 3   # Slight adverse OI
+        else:
+            score += 5  # No data → neutral
+        
+        # ─── 6. Volatility Regime (5 pts max) ────────────────────────
+        if volatility is not None:
+            if 0.005 < volatility < 0.03:
+                score += 5   # Moderate vol → tradeable
+            elif volatility >= 0.03:
+                score += 1   # High vol → risky but opportunity
+            else:
+                score += 3   # Low vol → less opportunity
+        else:
+            score += 3  # No data → neutral
+        
+        return max(0, min(100, score))
+    
+    @staticmethod
+    def get_conviction_leverage(score):
+        """
+        Map conviction score (0-100) to continuous leverage (10x-35x).
+        
+        Score 0-39   → 0  (skip trade — insufficient conviction)
+        Score 40     → 10x  (minimum deployment)
+        Score 55     → 16x
+        Score 70     → 22x
+        Score 85     → 29x
+        Score 100    → 35x  (maximum conviction)
+        """
+        if score < 40:
+            return 0
+        
+        # Continuous: 40→10x, 100→35x
+        leverage = 10 + (score - 40) / 60 * 25
+        return max(10, min(35, round(leverage)))
+
+    # ─── Legacy Dynamic Leverage (kept for backward compatibility) ───────
 
     @staticmethod
     def get_dynamic_leverage(confidence, regime):
@@ -59,17 +192,14 @@ class RiskManager:
             return config.LEVERAGE_LOW if confidence >= config.CONFIDENCE_LOW else 0
 
         # Trend regimes (Bull / Bear) — scale by confidence
-        # > 95% → 35x
         if confidence >= config.CONFIDENCE_HIGH:
             return config.LEVERAGE_HIGH
-        # 91–95% → 25x
         elif confidence >= config.CONFIDENCE_MEDIUM:
             return config.LEVERAGE_MODERATE
-        # 85–90% → 15x
         elif confidence >= config.CONFIDENCE_LOW:
             return config.LEVERAGE_LOW
         else:
-            return 0  # Below 85% — do not deploy
+            return 0  # Below threshold — do not deploy
 
     # ─── Position Sizing (2% Rule) ───────────────────────────────────────────
 

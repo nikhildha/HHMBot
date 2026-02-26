@@ -125,6 +125,114 @@ def _fetch_futures_klines_binance(symbol, interval, limit=500):
     return df
 
 
+def fetch_open_interest_hist(symbol="BTCUSDT", period="1h", limit=500):
+    """
+    Fetch historical Open Interest from Binance Futures.
+    
+    Returns DataFrame with columns: ['timestamp', 'open_interest']
+    OI represents total outstanding futures contracts.
+    """
+    import requests
+    
+    url = "https://fapi.binance.com/futures/data/openInterestHist"
+    params = {"symbol": symbol, "period": period, "limit": min(limit, 500)}
+    
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("OI fetch failed for %s: %s", symbol, e)
+        return None
+    
+    if not data:
+        return None
+    
+    df = pd.DataFrame(data)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df["open_interest"] = df["sumOpenInterest"].astype(float)
+    df = df[["timestamp", "open_interest"]].copy()
+    df.reset_index(drop=True, inplace=True)
+    logger.debug("OI: got %d data points for %s", len(df), symbol)
+    return df
+
+
+def fetch_funding_rate(symbol="BTCUSDT", limit=500):
+    """
+    Fetch historical Funding Rate from Binance Futures.
+    
+    Returns DataFrame with columns: ['timestamp', 'funding_rate']
+    Funding rate is typically every 8 hours.
+    """
+    import requests
+    
+    url = "https://fapi.binance.com/fapi/v1/fundingRate"
+    params = {"symbol": symbol, "limit": min(limit, 1000)}
+    
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("Funding rate fetch failed for %s: %s", symbol, e)
+        return None
+    
+    if not data:
+        return None
+    
+    df = pd.DataFrame(data)
+    df["timestamp"] = pd.to_datetime(df["fundingTime"], unit="ms")
+    df["funding_rate"] = df["fundingRate"].astype(float)
+    df = df[["timestamp", "funding_rate"]].copy()
+    df.reset_index(drop=True, inplace=True)
+    logger.debug("Funding: got %d data points for %s", len(df), symbol)
+    return df
+
+
+def enrich_with_oi_funding(df_ohlcv, symbol="BTCUSDT"):
+    """
+    Merge OI and Funding Rate data into an OHLCV DataFrame.
+    
+    Uses merge_asof to align different-frequency data (OI=1h, funding=8h)
+    with the OHLCV candle timestamps. Forward-fills gaps.
+    
+    Parameters
+    ----------
+    df_ohlcv : pd.DataFrame with 'timestamp' column
+    symbol : str
+    
+    Returns
+    -------
+    pd.DataFrame with added 'open_interest' and 'funding_rate' columns
+    """
+    df = df_ohlcv.copy()
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    
+    # Fetch OI
+    oi_df = fetch_open_interest_hist(symbol, period="1h", limit=500)
+    if oi_df is not None and len(oi_df) > 0:
+        oi_df = oi_df.sort_values("timestamp")
+        df = pd.merge_asof(df, oi_df, on="timestamp", direction="backward")
+        df["open_interest"] = df["open_interest"].ffill()
+        logger.info("Enriched with %d OI data points", len(oi_df))
+    else:
+        df["open_interest"] = 0.0
+        logger.warning("No OI data available, using zeros")
+    
+    # Fetch Funding Rate
+    fr_df = fetch_funding_rate(symbol, limit=500)
+    if fr_df is not None and len(fr_df) > 0:
+        fr_df = fr_df.sort_values("timestamp")
+        df = pd.merge_asof(df, fr_df, on="timestamp", direction="backward")
+        df["funding_rate"] = df["funding_rate"].ffill()
+        logger.info("Enriched with %d funding rate data points", len(fr_df))
+    else:
+        df["funding_rate"] = 0.0
+        logger.warning("No funding data available, using zeros")
+    
+    return df
+
+
 def _get_current_price_binance(symbol):
     """Get current price from Binance."""
     client = _get_binance_client()

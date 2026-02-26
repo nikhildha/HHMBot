@@ -163,24 +163,27 @@ class TestRiskManager(unittest.TestCase):
         # Crash → 0
         self.assertEqual(RiskManager.get_dynamic_leverage(0.9, config.REGIME_CRASH), 0)
 
-        # Chop → LEVERAGE_LOW
-        self.assertEqual(RiskManager.get_dynamic_leverage(0.9, config.REGIME_CHOP),
+        # Chop + high confidence → LEVERAGE_LOW
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.95, config.REGIME_CHOP),
                          config.LEVERAGE_LOW)
 
-        # Bull + High confidence → LEVERAGE_HIGH
-        self.assertEqual(RiskManager.get_dynamic_leverage(0.90, config.REGIME_BULL),
+        # Chop + below threshold → 0
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.90, config.REGIME_CHOP), 0)
+
+        # Bull + confidence >= 0.99 → LEVERAGE_HIGH
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.995, config.REGIME_BULL),
                          config.LEVERAGE_HIGH)
 
-        # Bull + Medium confidence → LEVERAGE_MODERATE
-        self.assertEqual(RiskManager.get_dynamic_leverage(0.70, config.REGIME_BULL),
+        # Bull + confidence 0.96–0.99 → LEVERAGE_MODERATE
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.97, config.REGIME_BULL),
                          config.LEVERAGE_MODERATE)
 
-        # Bull + Low confidence → LEVERAGE_LOW
-        self.assertEqual(RiskManager.get_dynamic_leverage(0.55, config.REGIME_BULL),
+        # Bull + confidence 0.92–0.96 → LEVERAGE_LOW
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.93, config.REGIME_BULL),
                          config.LEVERAGE_LOW)
 
-        # Bull + Too low → 0
-        self.assertEqual(RiskManager.get_dynamic_leverage(0.30, config.REGIME_BULL), 0)
+        # Bull + below 0.92 → 0
+        self.assertEqual(RiskManager.get_dynamic_leverage(0.90, config.REGIME_BULL), 0)
 
         print("  ✅ Risk Manager: Dynamic leverage mapping correct")
 
@@ -458,11 +461,11 @@ class TestTrailingSLTP(unittest.TestCase):
             confidence=0.85, capital=100.0,
         )
 
-        # Original SL: 50000 - 500*1.5 = 49250
+        # Original SL: 50000 - 500*1.2 = 49400 (1.2x ATR at 5x leverage)
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
         original_sl = trade["trailing_sl"]
-        self.assertAlmostEqual(original_sl, 49250.0, places=0)
+        self.assertAlmostEqual(original_sl, 49400.0, places=0)
         self.assertFalse(trade["trailing_active"])
 
         # Price moves up 1×ATR (500) → should activate trailing
@@ -518,14 +521,14 @@ class TestTrailingSLTP(unittest.TestCase):
             confidence=0.85, capital=100.0,
         )
 
-        # Original TP: 50000 + 500*3.0 = 51500
+        # Original TP: 50000 + 500*2.4 = 51200 (2.4x ATR at 5x leverage)
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
         original_tp = trade["trailing_tp"]
-        self.assertAlmostEqual(original_tp, 51500.0, places=0)
+        self.assertAlmostEqual(original_tp, 51200.0, places=0)
 
-        # Price reaches 75% of TP distance (1500 * 0.75 = 1125 → 51125)
-        update_unrealized(prices={"TRAILTEST3": 51200.0})
+        # Price reaches 75% of TP distance (1200 * 0.75 = 900 → 50900)
+        update_unrealized(prices={"TRAILTEST3": 50950.0})
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
         self.assertGreater(trade["trailing_tp"], original_tp,
@@ -564,29 +567,30 @@ class TestTrailingSLTP(unittest.TestCase):
         from tradebook import open_trade, update_unrealized, get_active_trades
 
         trade_id = open_trade(
-            symbol="TRAILTEST5", side="SELL", leverage=5, quantity=0.01,
-            entry_price=50000.0, atr=500.0, regime="BEARISH",
+            symbol="TRAILSHORT", side="SELL", leverage=5, quantity=0.01,
+            entry_price=50000.0, atr=200.0, regime="BEARISH",
             confidence=0.85, capital=100.0,
         )
 
-        # Original SL for SHORT: 50000 + 500*1.5 = 50750
+        # Original SL for SHORT: 50000 + 200*1.2 = 50240 (1.2x ATR at 5x leverage)
+        # Original TP for SHORT: 50000 - 200*2.4 = 49520
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
         original_sl = trade["trailing_sl"]
-        self.assertAlmostEqual(original_sl, 50750.0, places=0)
+        self.assertAlmostEqual(original_sl, 50240.0, places=0)
 
-        # Price drops 1×ATR → should activate trailing
-        update_unrealized(prices={"TRAILTEST5": 49500.0})
+        # Price drops 1×ATR → should activate trailing (stay above TP=49520)
+        update_unrealized(prices={"TRAILSHORT": 49800.0})
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
         self.assertTrue(trade["trailing_active"])
 
-        # Price drops further → SL should trail down
-        update_unrealized(prices={"TRAILTEST5": 48000.0})
+        # Price drops further → SL should trail down (but stay above TP=49520)
+        update_unrealized(prices={"TRAILSHORT": 49600.0})
         trades = get_active_trades()
         trade = next(t for t in trades if t["trade_id"] == trade_id)
-        # New SL = peak(48000) + 1×ATR(500) = 48500
-        self.assertLessEqual(trade["trailing_sl"], 48500.0,
+        # New SL = peak(49600) + 1×ATR(200) = 49800
+        self.assertLessEqual(trade["trailing_sl"], 49800.0,
                              "SHORT trailing SL should be at peak + 1×ATR")
         self.assertLess(trade["trailing_sl"], original_sl,
                         "SHORT trailing SL should have moved down")

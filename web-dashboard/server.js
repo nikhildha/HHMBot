@@ -842,7 +842,7 @@ function updateTradebookWithPrices(prices) {
         const totalRealized = closed.reduce((s, t) => s + (t.realized_pnl || 0), 0);
         const totalUnrealized = active.reduce((s, t) => s + (t.unrealized_pnl || 0), 0);
 
-        const MAX_CAPITAL = 2500;
+        const MAX_CAPITAL = 1500;
         const deployedCapital = active.length * 100;
         const losses = closed.filter(t => (t.realized_pnl || 0) < 0);
         const closedPnls = closed.map(t => t.realized_pnl || 0);
@@ -1385,7 +1385,7 @@ app.get('/api/config', (req, res) => {
 
         const config = {
             // Trading
-            PAPER_MAX_CAPITAL: num('PAPER_MAX_CAPITAL', 2500),
+            PAPER_MAX_CAPITAL: num('PAPER_MAX_CAPITAL', 1500),
             PRIMARY_SYMBOL: extract('PRIMARY_SYMBOL', 'BTCUSDT'),
 
             // Timeframes
@@ -1456,7 +1456,7 @@ app.get('/api/config', (req, res) => {
             ERROR_RETRY_SECONDS: num('ERROR_RETRY_SECONDS', 60),
 
             // Multi-Coin
-            MAX_CONCURRENT_POSITIONS: num('MAX_CONCURRENT_POSITIONS', 25),
+            MAX_CONCURRENT_POSITIONS: num('MAX_CONCURRENT_POSITIONS', 15),
             TOP_COINS_LIMIT: num('TOP_COINS_LIMIT', 50),
             CAPITAL_PER_COIN_PCT: num('CAPITAL_PER_COIN_PCT', 0.03),
             SCAN_INTERVAL_CYCLES: num('SCAN_INTERVAL_CYCLES', 4),
@@ -1621,13 +1621,13 @@ app.post('/api/config/preset', (req, res) => {
                 VOL_MIN_ATR_PCT: 0.008, VOL_MAX_ATR_PCT: 0.03, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
             balanced: {
-                RISK_PER_TRADE: 0.02, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 25, LEVERAGE_LOW: 15,
+                RISK_PER_TRADE: 0.02, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 20, LEVERAGE_LOW: 10,
                 MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.96, CONFIDENCE_LOW: 0.92,
                 VOL_MIN_ATR_PCT: 0.005, VOL_MAX_ATR_PCT: 0.04, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
             aggressive: {
-                RISK_PER_TRADE: 0.04, LEVERAGE_HIGH: 50, LEVERAGE_MODERATE: 35, LEVERAGE_LOW: 25,
-                MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.97, CONFIDENCE_LOW: 0.95,
+                RISK_PER_TRADE: 0.03, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 25, LEVERAGE_LOW: 15,
+                MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.96, CONFIDENCE_LOW: 0.92,
                 VOL_MIN_ATR_PCT: 0.003, VOL_MAX_ATR_PCT: 0.06, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
         };

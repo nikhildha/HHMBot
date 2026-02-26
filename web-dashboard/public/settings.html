@@ -501,18 +501,18 @@
 <span class="dim">│</span>                                                                         <span class="dim">│</span>
 <span class="dim">│</span>  <span class="yellow">📡 Data Pipeline</span>          <span class="green">🧠 HMM Brain</span>           <span class="purple">⚖️ Risk Manager</span>   <span class="dim">│</span>
 <span class="dim">│</span>  ┌──────────────┐        ┌──────────────┐       ┌──────────────┐      <span class="dim">│</span>
-<span class="dim">│</span>  │ Binance API  │──────▶ │ GaussianHMM  │─────▶ │ Dynamic Lev  │      <span class="dim">│</span>
-<span class="dim">│</span>  │ OHLCV Fetch  │        │ 4 States     │       │ Position Size │      <span class="dim">│</span>
-<span class="dim">│</span>  │ 5m · 1h · 4h │        │ Train/Predict│       │ ATR SL/TP    │      <span class="dim">│</span>
+<span class="dim">│</span>  │ Binance API  │──────▶ │ GaussianHMM  │─────▶ │ Conviction   │      <span class="dim">│</span>
+<span class="dim">│</span>  │ OHLCV + OI   │        │ 4 States     │       │ Scoring 0-100│      <span class="dim">│</span>
+<span class="dim">│</span>  │ 5m · 1h · 4h │        │ 8 Features   │       │ Lev 10x-35x  │      <span class="dim">│</span>
 <span class="dim">│</span>  └──────────────┘        └──────────────┘       └──────────────┘      <span class="dim">│</span>
 <span class="dim">│</span>         │                       │                       │              <span class="dim">│</span>
 <span class="dim">│</span>         ▼                       ▼                       ▼              <span class="dim">│</span>
 <span class="dim">│</span>  <span class="accent">📊 Feature Engine</span>       <span class="green">🎯 Regime Label</span>       <span class="red">🛡️ Trade Guard</span>      <span class="dim">│</span>
 <span class="dim">│</span>  ┌──────────────┐        ┌──────────────┐       ┌──────────────┐      <span class="dim">│</span>
-<span class="dim">│</span>  │ log_return   │        │ BULL ● BEAR  │       │ Vol Filter   │      <span class="dim">│</span>
-<span class="dim">│</span>  │ volatility   │        │ CHOP ● CRASH │       │ Kill Switch  │      <span class="dim">│</span>
-<span class="dim">│</span>  │ RSI · BB     │        │ Confidence % │       │ Max Loss     │      <span class="dim">│</span>
-<span class="dim">│</span>  │ ATR          │        │ Multi-TF     │       │ Trailing SL  │      <span class="dim">│</span>
+<span class="dim">│</span>  │ 8 HMM feats  │        │ BULL ● BEAR  │       │ Vol Filter   │      <span class="dim">│</span>
+<span class="dim">│</span>  │ VWAP · S/R   │        │ CHOP ● CRASH │       │ Kill Switch  │      <span class="dim">│</span>
+<span class="dim">│</span>  │ OI · Funding │        │ Conviction % │       │ Max Loss -30%│      <span class="dim">│</span>
+<span class="dim">│</span>  │ RSI · ATR    │        │ Multi-TF     │       │ Trailing SL  │      <span class="dim">│</span>
 <span class="dim">│</span>  └──────────────┘        └──────────────┘       └──────────────┘      <span class="dim">│</span>
 <span class="dim">│</span>                                │                                      <span class="dim">│</span>
 <span class="dim">│</span>                                ▼                                      <span class="dim">│</span>
@@ -606,11 +606,13 @@
                             <div class="step-num">1</div>
                             <div class="step-content">
                                 <h3>Coin Scanning</h3>
-                                <p><code>coin_scanner.py</code> fetches the top 50 coins by 24h volume from Binance
+                                <p><code>coin_scanner.py</code> fetches the <strong>top 15 coins</strong> by 24h volume
+                                    from Binance
                                     Futures.
                                     Re-scans every 4 analysis cycles (~1 hour). This ensures we always trade the most
                                     liquid
-                                    markets.</p>
+                                    markets. Max <strong>15 concurrent positions</strong> at 5% capital each (75% max
+                                    deployed).</p>
                             </div>
                         </div>
                         <div class="step-connector"></div>
@@ -633,25 +635,38 @@
                             <div class="step-num">3</div>
                             <div class="step-content">
                                 <h3>Feature Engineering</h3>
-                                <p><code>feature_engine.py</code> computes two types of features:</p>
+                                <p><code>feature_engine.py</code> computes <strong>8 HMM input features</strong> and
+                                    additional technical indicators:</p>
                                 <div class="logic-block">
-                                    <h4>HMM Input Features</h4>
+                                    <h4>8 HMM Input Features (fed to GaussianHMM)</h4>
                                     <ul>
                                         <li><strong>log_return</strong> = <code>log(close / prev_close)</code> —
-                                            captures
                                             directional momentum</li>
-                                        <li><strong>volatility</strong> = <code>(high - low) / close</code> — captures
-                                            intraday price range</li>
+                                        <li><strong>volatility</strong> = <code>(high - low) / close</code> — intraday
+                                            price range</li>
+                                        <li><strong>volume_change</strong> = <code>log(volume / prev_volume)</code> —
+                                            volume spikes signaling regime shifts</li>
+                                        <li><strong>rsi_norm</strong> = <code>(RSI_14 - 50) / 50</code> — momentum
+                                            context, range [-1, +1]</li>
+                                        <li><strong>vwap_position</strong> = <code>(close - VWAP) / ATR</code> —
+                                            distance from fair value</li>
+                                        <li><strong>sr_position</strong> = position in S/R range [-1, +1] (support to
+                                            resistance)</li>
+                                        <li><strong>oi_change</strong> = <code>log(OI / prev_OI)</code> — open interest
+                                            momentum</li>
+                                        <li><strong>funding_norm</strong> = z-scored funding rate — crowding indicator
+                                        </li>
                                     </ul>
                                 </div>
                                 <div class="logic-block purple">
-                                    <h4>Technical Indicators</h4>
+                                    <h4>Additional Technical Indicators</h4>
                                     <ul>
-                                        <li><strong>RSI</strong> (14-period) — overbought/oversold for mean reversion
-                                        </li>
+                                        <li><strong>RSI</strong> (14) — overbought/oversold for mean reversion</li>
                                         <li><strong>Bollinger Bands</strong> (20, 2σ) — volatility squeeze detection
                                         </li>
-                                        <li><strong>ATR</strong> (14-period) — used for SL/TP sizing and vol filter</li>
+                                        <li><strong>ATR</strong> (14) — used for SL/TP sizing and vol filter</li>
+                                        <li><strong>VWAP</strong> (20-bar rolling) — volume-weighted fair value</li>
+                                        <li><strong>Support / Resistance</strong> — swing high/low pivot levels</li>
                                     </ul>
                                 </div>
                             </div>
@@ -737,49 +752,73 @@
                         <div class="step-box">
                             <div class="step-num">7</div>
                             <div class="step-content">
-                                <h3>Dynamic Leverage</h3>
-                                <p><code>risk_manager.py</code> maps confidence + regime → leverage multiplier:</p>
+                                <h3>Conviction Scoring → Dynamic Leverage</h3>
+                                <p><code>risk_manager.py</code> computes a multi-factor <strong>conviction score
+                                        (0-100)</strong> that drives continuous leverage from <strong>10×–35×</strong>:
+                                </p>
                                 <table class="config-table" style="margin:12px 0;">
                                     <thead>
                                         <tr>
-                                            <th>Condition</th>
-                                            <th>Leverage</th>
-                                            <th>Rationale</th>
+                                            <th>Factor</th>
+                                            <th>Weight</th>
+                                            <th>What It Measures</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td>CRASH regime</td>
-                                            <td class="param-value">0× (skip)</td>
-                                            <td>Capital preservation</td>
+                                            <td>HMM Confidence</td>
+                                            <td class="param-value">30%</td>
+                                            <td>Core model signal strength (≥92% to score)</td>
                                         </tr>
                                         <tr>
-                                            <td>CHOP regime + conf ≥ 85%</td>
-                                            <td class="param-value">15×</td>
-                                            <td>Mean reversion, reduced risk</td>
+                                            <td>BTC Macro Alignment</td>
+                                            <td class="param-value">25%</td>
+                                            <td>Does BTC regime agree with the trade?</td>
                                         </tr>
                                         <tr>
-                                            <td>BULL/BEAR + conf ≥ 95%</td>
-                                            <td class="param-value">35×</td>
-                                            <td>High conviction trend</td>
+                                            <td>Funding Rate</td>
+                                            <td class="param-value">15%</td>
+                                            <td>Is the opposite side crowded? (squeeze potential)</td>
                                         </tr>
                                         <tr>
-                                            <td>BULL/BEAR + conf 91–95%</td>
-                                            <td class="param-value">25×</td>
-                                            <td>Moderate confidence</td>
+                                            <td>S/R + VWAP Position</td>
+                                            <td class="param-value">15%</td>
+                                            <td>Are we entering at a structurally favorable level?</td>
                                         </tr>
                                         <tr>
-                                            <td>BULL/BEAR + conf 85–91%</td>
-                                            <td class="param-value">15×</td>
-                                            <td>Minimum deployment threshold</td>
+                                            <td>OI Momentum</td>
+                                            <td class="param-value">10%</td>
+                                            <td>Is smart money building our direction?</td>
                                         </tr>
                                         <tr>
-                                            <td>conf < 85%</td>
-                                            <td class="param-value">0× (DO NOT DEPLOY)</td>
-                                            <td>Below minimum — no trade</td>
+                                            <td>Volatility Regime</td>
+                                            <td class="param-value">5%</td>
+                                            <td>Is vol in the tradeable sweet spot?</td>
                                         </tr>
                                     </tbody>
                                 </table>
+                                <div class="logic-block green">
+                                    <h4>Score → Leverage Mapping</h4>
+                                    <ul>
+                                        <li>Conviction <strong>&lt; 40</strong> → <strong>SKIP</strong> (no trade)</li>
+                                        <li>Conviction <strong>40</strong> → <strong>10×</strong> leverage (minimum)
+                                        </li>
+                                        <li>Conviction <strong>70</strong> → <strong>~22×</strong> leverage (mid-range)
+                                        </li>
+                                        <li>Conviction <strong>100</strong> → <strong>35×</strong> leverage (maximum)
+                                        </li>
+                                        <li>Formula: <code>leverage = 10 + (score - 40) / 60 × 25</code></li>
+                                    </ul>
+                                </div>
+                                <div class="logic-block red">
+                                    <h4>CRASH & Chop Regimes</h4>
+                                    <ul>
+                                        <li><strong>CRASH</strong> on either timeframe → <strong>0×</strong> (skip —
+                                            capital preservation)</li>
+                                        <li><strong>CHOP</strong> → Sideways strategy at reduced 10× leverage (mean
+                                            reversion)</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                         <div class="step-connector"></div>
@@ -1104,7 +1143,7 @@
                             <ul
                                 style="font-size:12px;color:var(--text-tertiary);list-style:none;padding:0;margin:0;line-height:1.7;">
                                 <li>Risk: <strong>2%</strong> per trade</li>
-                                <li>Leverage: <strong>15-35×</strong></li>
+                                <li>Leverage: <strong>10-35×</strong></li>
                                 <li>Max Loss: <strong>-30%</strong></li>
                                 <li>Min Confidence: <strong>85%</strong></li>
                             </ul>
@@ -1119,8 +1158,8 @@
                                 max leverage</p>
                             <ul
                                 style="font-size:12px;color:var(--text-tertiary);list-style:none;padding:0;margin:0;line-height:1.7;">
-                                <li>Risk: <strong>4%</strong> per trade</li>
-                                <li>Leverage: <strong>25-50×</strong></li>
+                                <li>Risk: <strong>3%</strong> per trade</li>
+                                <li>Leverage: <strong>15-35×</strong></li>
                                 <li>Max Loss: <strong>-30%</strong></li>
                                 <li>Min Confidence: <strong>80%</strong></li>
                             </ul>
@@ -1147,13 +1186,13 @@
                                     <td>RISK_PER_TRADE</td>
                                     <td>1%</td>
                                     <td>2%</td>
-                                    <td>4%</td>
+                                    <td>3%</td>
                                 </tr>
                                 <tr>
                                     <td>LEVERAGE (Low/Med/High)</td>
                                     <td>10 / 15 / 20</td>
+                                    <td>10 / 20 / 35</td>
                                     <td>15 / 25 / 35</td>
-                                    <td>25 / 35 / 50</td>
                                 </tr>
                                 <tr>
                                     <td>MAX_LOSS_PER_TRADE_PCT</td>
@@ -1370,12 +1409,12 @@
                             </tr>
                             <tr>
                                 <td><span class="param-name">LEVERAGE_MODERATE</span></td>
-                                <td class="param-value" data-cfg="LEVERAGE_MODERATE" data-fmt="x">25×</td>
+                                <td class="param-value" data-cfg="LEVERAGE_MODERATE" data-fmt="x">20×</td>
                                 <td>Confidence 91–95%</td>
                             </tr>
                             <tr>
                                 <td><span class="param-name">LEVERAGE_LOW</span></td>
-                                <td class="param-value" data-cfg="LEVERAGE_LOW" data-fmt="x">15×</td>
+                                <td class="param-value" data-cfg="LEVERAGE_LOW" data-fmt="x">10×</td>
                                 <td>Confidence 85–91% / CHOP regime</td>
                             </tr>
                             <tr>
@@ -1448,8 +1487,8 @@
                             </tr>
                             <tr>
                                 <td><span class="param-name">PAPER_MAX_CAPITAL</span></td>
-                                <td class="param-value" data-cfg="PAPER_MAX_CAPITAL" data-fmt="$">$2,500</td>
-                                <td>Total paper portfolio (25 slots × $100)</td>
+                                <td class="param-value" data-cfg="PAPER_MAX_CAPITAL" data-fmt="$">$1,500</td>
+                                <td>Total paper portfolio (15 slots × $100)</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1623,12 +1662,12 @@
                             </tr>
                             <tr>
                                 <td><span class="param-name">MAX_CONCURRENT_POSITIONS</span></td>
-                                <td class="param-value" data-cfg="MAX_CONCURRENT_POSITIONS">25</td>
+                                <td class="param-value" data-cfg="MAX_CONCURRENT_POSITIONS">15</td>
                                 <td>Max simultaneous open positions</td>
                             </tr>
                             <tr>
                                 <td><span class="param-name">TOP_COINS_LIMIT</span></td>
-                                <td class="param-value" data-cfg="TOP_COINS_LIMIT">50</td>
+                                <td class="param-value" data-cfg="TOP_COINS_LIMIT">15</td>
                                 <td>Number of coins to scan</td>
                             </tr>
                             <tr>
