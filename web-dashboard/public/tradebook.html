@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL — Tradebook</title>
+    <meta name="description" content="Complete paper trade journal with P&L tracking for the SENTINEL AI trading bot">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/tradebook.css">
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</head>
+
+<body>
+
+    <!-- ═══ Header ═══ -->
+    <header class="header">
+        <div class="logo">
+            <div>
+                <div class="logo-text">SENTINEL</div>
+                <div class="logo-subtitle">Tradebook</div>
+            </div>
+        </div>
+        <nav class="header-nav">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/tradebook" class="nav-link active">Tradebook</a>
+            <a href="/charts" class="nav-link">Charts</a>
+            <a href="/backtest" class="nav-link">Backtest</a>
+            <a href="/deploy" class="nav-link">Deploy</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </nav>
+        <div class="header-right">
+            <span class="timestamp" id="lastUpdate">Connecting...</span>
+            <div class="status-pill" id="statusPill">
+                <span class="dot"></span>
+                <span id="statusText">OFFLINE</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══ Main Content ═══ -->
+    <main class="main tradebook-main">
+
+        <!-- ─── Portfolio Summary Cards ─── -->
+        <div class="section-header" style="margin-top: 16px;">
+
+            <h2>Portfolio Summary</h2>
+            <span class="line"></span>
+        </div>
+
+        <div class="portfolio-row">
+            <!-- ─── Portfolio Stats (compact table) ─── -->
+            <div class="portfolio-stats-card card" style="flex: 1 1 100%">
+                <table class="portfolio-stats-table">
+                    <thead>
+                        <tr>
+                            <th>Total Trades</th>
+                            <th>Active</th>
+                            <th>Closed</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Win Rate</th>
+                            <th>Profit Factor</th>
+                            <th>Sharpe</th>
+                            <th>R:R</th>
+                            <th>Max DD</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td id="summTotalTrades">—</td>
+                            <td class="cyan" id="summActiveTrades">—</td>
+                            <td id="summClosedTrades">—</td>
+                            <td class="green" id="summWins">—</td>
+                            <td class="red" id="summLosses">—</td>
+                            <td class="purple" id="summWinRate">—</td>
+                            <td id="summProfitFactor">—</td>
+                            <td id="summSharpe">—</td>
+                            <td id="summRiskReward">—</td>
+                            <td class="red" id="summMaxDrawdown">—</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="portfolio-row">
+            <!-- ─── P&L Metrics ─── -->
+            <div class="pnl-grid">
+                <div class="pnl-card">
+                    <div class="pnl-content">
+                        <div class="pnl-label">Realized P&L</div>
+                        <div class="pnl-row">
+                            <span class="pnl-value" id="summRealizedPnl">$0.00</span>
+                            <span class="pnl-pct" id="summRealizedPnlPct">0%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-content">
+                        <div class="pnl-label">Unrealized P&L</div>
+                        <div class="pnl-row">
+                            <span class="pnl-value" id="summUnrealizedPnl">$0.00</span>
+                            <span class="pnl-pct" id="summUnrealizedPnlPct">0%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-content">
+                        <div class="pnl-label">Cumulative P&L</div>
+                        <div class="pnl-row">
+                            <span class="pnl-value" id="summCumulativePnl">$0.00</span>
+                            <span class="pnl-pct" id="summCumulativePnlPct">0%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-content">
+                        <div class="pnl-label">Best / Worst Trade</div>
+                        <div class="pnl-row">
+                            <span class="pnl-value green" id="summBestTrade">$0</span>
+                            <span class="pnl-value red" id="summWorstTrade">$0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="pnl-card">
+                    <div class="pnl-content">
+                        <div class="pnl-label">Win / Loss Streak</div>
+                        <div class="pnl-row">
+                            <span class="pnl-value green" id="summWinStreak">0</span>
+                            <span class="pnl-value red" id="summLossStreak">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Filter & Controls ─── -->
+        <div class="section-header">
+
+            <h2>Trade Journal</h2>
+            <span class="line"></span>
+        </div>
+
+        <div class="filter-bar card">
+            <div class="filter-group">
+                <label>Status</label>
+                <select id="filterStatus" onchange="applyFilters()">
+                    <option value="ALL">All</option>
+                    <option value="ACTIVE" selected>Active</option>
+                    <option value="CLOSED">Closed</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Position</label>
+                <select id="filterPosition" onchange="applyFilters()">
+                    <option value="ALL">All</option>
+                    <option value="LONG">Long</option>
+                    <option value="SHORT">Short</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Regime</label>
+                <select id="filterRegime" onchange="applyFilters()">
+                    <option value="ALL">All</option>
+                    <option value="BULLISH">Bullish</option>
+                    <option value="BEARISH">Bearish</option>
+                    <option value="SIDEWAYS/CHOP">Sideways</option>
+                    <option value="CRASH/PANIC">Crash</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>P&L</label>
+                <select id="filterPnl" onchange="applyFilters()">
+                    <option value="ALL">All</option>
+                    <option value="PROFIT">Profit ▲</option>
+                    <option value="LOSS">Loss ▼</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Symbol</label>
+                <input type="text" id="filterSymbol" placeholder="e.g. BTC" oninput="applyFilters()">
+            </div>
+            <button class="btn btn-sm" onclick="refreshData()" id="syncCdxBtn"
+                style="background:linear-gradient(135deg,#0EA5E9,#3B82F6);color:#fff;display:none;">🔄 Sync
+                CoinDCX</button>
+            <button class="btn btn-refresh btn-sm" onclick="exportCSV()">Export CSV</button>
+            <button class="btn btn-sm" onclick="generatePdfReport()"
+                style="background:linear-gradient(135deg,#8B5CF6,#6D28D9);color:#fff;">Insights</button>
+            <button class="btn btn-danger btn-sm" onclick="closeSelectedTrades()" id="closeSelectedBtn"
+                style="display:none;">Close Selected</button>
+            <span id="selectedCount" style="font-size:12px;color:#64748B;"></span>
+            <button class="btn btn-danger btn-sm" onclick="deleteAllTrades()">Delete</button>
+        </div>
+
+        <!-- ─── Trade Table ─── -->
+        <div class="positions-table-wrapper card tradebook-table-wrapper">
+            <div id="tradebookArea">
+                <div class="empty-state">
+                    <div class="icon">📝</div>
+                    <p>No trades recorded yet. Paper trades will appear here when the bot deploys.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── P&L Chart ─── -->
+        <div class="section-header">
+
+            <h2>P&L Curve</h2>
+            <span class="line"></span>
+        </div>
+        <div class="card chart-container pnl-chart-wrapper">
+            <canvas id="pnlChart"></canvas>
+        </div>
+
+        <!-- ─── P&L Timeline ─── -->
+        <div class="section-header">
+            <h2>P&L Timeline</h2>
+            <span class="line"></span>
+        </div>
+        <div class="card chart-container pnl-chart-wrapper">
+            <canvas id="pnlTimelineChart"></canvas>
+        </div>
+
+        <!-- ─── Report History ─── -->
+        <div class="section-header">
+            <h2>Report History</h2>
+            <span class="line"></span>
+        </div>
+        <div class="positions-table-wrapper card tradebook-table-wrapper">
+            <div id="reportHistoryArea">
+                <div class="empty-state" style="padding:24px">
+                    <p style="color:#64748B;font-size:13px">No reports generated yet. Click "Insights" to
+                        create one.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Controls ─── -->
+        <div class="controls-bar">
+            <button class="btn btn-refresh" onclick="refreshData()">Refresh</button>
+        </div>
+
+    </main>
+
+    <!-- ═══ Footer ═══ -->
+    <footer class="footer">
+        SENTINEL v2.0 — Tradebook &copy; 2026 &nbsp;|&nbsp;
+        Real-time WebSocket Updates &nbsp;|&nbsp; Default Capital: $100/trade
+    </footer>
+
+    <!-- ═══ Custom Confirm Modal ═══ -->
+    <div id="confirmModal"
+        style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.4); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+        <div
+            style="background:#ffffff; border:1px solid #E2E8F0; border-radius:20px; padding:32px; max-width:420px; width:90%; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+            <div id="confirmIcon" style="font-size:48px; margin-bottom:16px;">⚠️</div>
+            <div id="confirmTitle" style="font-size:18px; font-weight:700; color:#1A2332; margin-bottom:8px;"></div>
+            <div id="confirmMsg" style="font-size:14px; color:#5A6A7E; margin-bottom:24px; line-height:1.5;"></div>
+            <div style="display:flex; gap:12px; justify-content:center;">
+                <button id="confirmNo"
+                    style="padding:10px 28px; border-radius:10px; border:1px solid #E2E8F0; background:#F4F7FA; color:#5A6A7E; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
+                <button id="confirmYes"
+                    style="padding:10px 28px; border-radius:10px; border:none; background:linear-gradient(135deg,#EF4444,#DC2626); color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/mode-toggle.js"></script>
+    <script src="/tradebook-app.js"></script>
+</body>
+
+</html>

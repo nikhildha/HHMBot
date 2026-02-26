@@ -1,0 +1,22 @@
+# Environment & secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+web-dashboard/node_modules/
+
+# Data (runtime state — not in repo)
+data/
+
+# OS
+.DS_Store
+*.log
+
+# IDE
+.vscode/
+.idea/

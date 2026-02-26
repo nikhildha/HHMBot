@@ -1,0 +1,151 @@
+"""
+Project Regime-Master — Central Configuration
+All settings, thresholds, and constants live here.
+"""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ─── Binance API (used for PAPER trading) ────────────────────────────────────────
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+TESTNET = os.getenv("TESTNET", "true").lower() == "true"
+PAPER_TRADE = os.getenv("PAPER_TRADE", "true").lower() == "true"
+PAPER_MAX_CAPITAL = 2500       # Total portfolio: 25 slots × $100/trade
+
+# ─── CoinDCX API (used for LIVE trading) ────────────────────────────────────────
+COINDCX_API_KEY = os.getenv("COINDCX_API_KEY", "")
+COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "")
+COINDCX_BASE_URL = "https://api.coindcx.com"
+COINDCX_PUBLIC_URL = "https://public.coindcx.com"
+COINDCX_MARGIN_CURRENCY = os.getenv("COINDCX_MARGIN_CURRENCY", "USDT")
+EXCHANGE_LIVE = os.getenv("EXCHANGE_LIVE", "coindcx")  # Live exchange: coindcx
+
+# ─── CoinDCX Fees ───────────────────────────────────────────────────────────────
+TAKER_FEE_COINDCX = 0.0005    # 0.05% per leg
+MAKER_FEE_COINDCX = 0.0002    # 0.02% per leg
+
+# ─── Trading Symbols ────────────────────────────────────────────────────────────
+PRIMARY_SYMBOL = "BTCUSDT"
+SECONDARY_SYMBOLS = ["ETHUSDT"]
+
+# ─── Timeframes ─────────────────────────────────────────────────────────────────
+TIMEFRAME_EXECUTION = "15m"   # Entry / exit timing (optimized from 5m)
+TIMEFRAME_CONFIRMATION = "1h" # Trend confirmation
+TIMEFRAME_MACRO = "4h"        # Macro regime
+
+# ─── HMM Brain ──────────────────────────────────────────────────────────────────
+HMM_N_STATES = 4              # Bull, Bear, Chop, Crash
+HMM_COVARIANCE = "full"       # Optimized: captures cross-feature correlations
+HMM_ITERATIONS = 100
+HMM_LOOKBACK = 500            # Candles used for training
+HMM_RETRAIN_HOURS = 24        # Retrain every N hours
+
+# ─── Regime Labels (assigned post-training by sorting mean returns) ──────────
+REGIME_BULL = 0
+REGIME_BEAR = 1
+REGIME_CHOP = 2
+REGIME_CRASH = 3
+
+REGIME_NAMES = {
+    REGIME_BULL:  "BULLISH",
+    REGIME_BEAR:  "BEARISH",
+    REGIME_CHOP:  "SIDEWAYS/CHOP",
+    REGIME_CRASH: "CRASH/PANIC",
+}
+
+# ─── Leverage Tiers ─────────────────────────────────────────────────────────────
+LEVERAGE_HIGH = 35       # Confidence > 95%
+LEVERAGE_MODERATE = 25   # Confidence 91–95%
+LEVERAGE_LOW = 15        # Confidence 85–90%
+LEVERAGE_NONE = 1        # Observation mode
+
+# ─── Confidence Thresholds ──────────────────────────────────────────────────────
+CONFIDENCE_HIGH = 0.99   # Above 99% → 35x  (optimized from 0.95)
+CONFIDENCE_MEDIUM = 0.96 # 96–99% → 25x  (optimized from 0.91)
+CONFIDENCE_LOW = 0.92    # 92–96% → 15x  (optimized from 0.85, below 92% = no deploy)
+
+# ─── Risk Management ────────────────────────────────────────────────────────────
+RISK_PER_TRADE = 0.04
+KILL_SWITCH_DRAWDOWN = 0.10   # Pause bot if 10% drawdown in 24h
+MAX_LOSS_PER_TRADE_PCT = -30
+MIN_HOLD_MINUTES = 30         # Minimum hold time before regime-change exits
+DEFAULT_QUANTITY = 0.002      # BTC quantity (overridden by position sizer)
+MARGIN_TYPE = "ISOLATED"      # Never use CROSS for high leverage
+
+# ─── Stop Loss / Take Profit ────────────────────────────────────────────────────
+ATR_SL_MULTIPLIER = 1.5       # SL = ATR * multiplier (DEFAULT, used as fallback)
+ATR_TP_MULTIPLIER = 3.0       # TP = ATR * multiplier (DEFAULT, used as fallback)
+SLIPPAGE_BUFFER = 0.0005      # 0.05% slippage estimate
+
+def get_atr_multipliers(leverage=1):
+    """Return (sl_mult, tp_mult) adjusted for leverage.
+    Higher leverage → tighter SL/TP to keep effective portfolio risk consistent.
+    Always maintains 1:2 risk-reward ratio."""
+    if leverage >= 50:
+        return (0.5, 1.0)
+    elif leverage >= 25:
+        return (0.7, 1.4)
+    elif leverage >= 10:
+        return (1.0, 2.0)
+    elif leverage >= 5:
+        return (1.2, 2.4)
+    else:  # 1-4x
+        return (ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER)
+
+# ─── Trailing SL / TP ──────────────────────────────────────────────────────────
+TRAILING_SL_ENABLED = True
+TRAILING_SL_ACTIVATION_ATR = 1.0     # Start trailing after price moves 1×ATR in favor
+TRAILING_SL_DISTANCE_ATR = 1.0       # Trail distance: SL stays 1×ATR behind peak price
+TRAILING_TP_ENABLED = True
+TRAILING_TP_ACTIVATION_PCT = 0.75    # Start extending TP once 75% of TP distance reached
+TRAILING_TP_EXTENSION_ATR = 1.5      # Extend TP by 1.5×ATR each time threshold is hit
+TRAILING_TP_MAX_EXTENSIONS = 3       # Max TP extensions (prevents runaway)
+
+# ─── Volatility Filter ─────────────────────────────────────────────────────────
+VOL_FILTER_ENABLED = True
+VOL_MIN_ATR_PCT = 0.003
+VOL_MAX_ATR_PCT = 0.06
+
+# ─── Fees ────────────────────────────────────────────────────────────────────────
+TAKER_FEE = 0.0005            # 0.05% Binance futures taker per leg (0.1% round trip)
+MAKER_FEE = 0.0002            # 0.02% Binance futures maker
+
+# ─── Sideways Strategy ──────────────────────────────────────────────────────────
+BB_LENGTH = 20
+BB_STD = 2.0
+RSI_LENGTH = 14
+RSI_OVERSOLD = 35
+RSI_OVERBOUGHT = 65
+SIDEWAYS_POSITION_REDUCTION = 0.30  # 30% smaller positions in chop
+
+# ─── Bot Loop ────────────────────────────────────────────────────────────────────
+LOOP_INTERVAL_SECONDS = 60        # 1-minute heartbeat (checks commands, updates state)
+ANALYSIS_INTERVAL_SECONDS = 900   # 15-minute full analysis cycle (HMM scan, trades)
+ERROR_RETRY_SECONDS = 60          # Retry after error
+
+# ─── Multi-Coin Trading ──────────────────────────────────────────────────────────
+MAX_CONCURRENT_POSITIONS = 25   # Max symbols traded at once
+TOP_COINS_LIMIT = 50            # How many coins to scan
+CAPITAL_PER_COIN_PCT = 0.03     # 3% of balance per coin (max 25 = 75% deployed)
+SCAN_INTERVAL_CYCLES = 4        # Re-scan top coins every N analysis cycles (4 × 15m = 1h)
+MULTI_COIN_MODE = True          # Enable multi-coin scanning
+
+# ─── Telegram Notifications ──────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
+TELEGRAM_NOTIFY_TRADES = os.getenv("TELEGRAM_NOTIFY_TRADES", "true").lower() == "true"
+TELEGRAM_NOTIFY_ALERTS = os.getenv("TELEGRAM_NOTIFY_ALERTS", "true").lower() == "true"
+TELEGRAM_NOTIFY_SUMMARY = os.getenv("TELEGRAM_NOTIFY_SUMMARY", "true").lower() == "true"
+
+# ─── Paths ───────────────────────────────────────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+TRADE_LOG_FILE = os.path.join(DATA_DIR, "trade_log.csv")
+STATE_FILE = os.path.join(DATA_DIR, "bot_state.json")
+MULTI_STATE_FILE = os.path.join(DATA_DIR, "multi_bot_state.json")
+COMMANDS_FILE = os.path.join(DATA_DIR, "commands.json")
+
+os.makedirs(DATA_DIR, exist_ok=True)

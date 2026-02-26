@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SENTINEL — AI Crypto Command Center</title>
+  <meta name="description" content="Premium AI-driven crypto trading bot dashboard powered by SENTINEL">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+
+  <!-- ═══ Ticker Tape ═══ -->
+  <div class="ticker-tape">
+    <div class="ticker-track" id="tickerTrack">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- ═══ Header ═══ -->
+  <header class="header">
+    <div class="logo">
+      <div>
+        <div class="logo-text">SENTINEL</div>
+        <div class="logo-subtitle">AI Trading Command Center</div>
+      </div>
+    </div>
+    <nav class="header-nav">
+      <a href="/" class="nav-link active">Dashboard</a>
+      <a href="/tradebook" class="nav-link">Tradebook</a>
+      <a href="/charts" class="nav-link">Charts</a>
+      <a href="/backtest" class="nav-link">Backtest</a>
+      <a href="/deploy" class="nav-link">Deploy</a>
+      <a href="/settings" class="nav-link">Settings</a>
+    </nav>
+    <div class="header-right">
+      <span class="timestamp" id="lastUpdate">Connecting...</span>
+      <div class="status-pill" id="statusPill">
+        <span class="dot"></span>
+        <span id="statusText">OFFLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ Main Grid ═══ -->
+  <main class="main">
+
+    <!-- ─── Regime Card (Black) ─── -->
+    <div class="card card-dark regime-card" id="regimeCard">
+      <div class="card-title">Primary Regime</div>
+      <div class="regime-emoji" id="regimeEmoji">⏳</div>
+      <div class="card-value" id="regimeName">WAITING</div>
+      <div class="card-subtitle" id="regimeSymbol">BTCUSDT</div>
+      <div class="card-subtitle" id="regimeTimeframe" style="font-size:11px;opacity:0.7;margin-top:2px;">5m · 1h · 4h
+      </div>
+    </div>
+
+    <!-- ─── Confidence Gauge (Black) ─── -->
+    <div class="card card-dark">
+      <div class="card-title">AI Confidence</div>
+      <div class="gauge-container">
+        <div class="gauge-wrapper">
+          <svg class="gauge-svg" viewBox="0 0 160 160">
+            <circle class="gauge-bg" cx="80" cy="80" r="68" />
+            <circle class="gauge-fill" id="gaugeFill" cx="80" cy="80" r="68" stroke-dasharray="427.26"
+              stroke-dashoffset="427.26" />
+          </svg>
+          <div class="gauge-text">
+            <div class="gauge-pct" id="gaugePct">0%</div>
+            <div class="gauge-label">HMM State Prob</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Active Positions (Black) ─── -->
+    <div class="card card-dark">
+      <div class="card-title">Active Positions</div>
+      <div class="card-value cyan" id="activePositions" style="font-size:72px">—</div>
+      <div class="card-subtitle" id="maxSlotsSub">Max concurrent slots: 25</div>
+    </div>
+
+    <!-- ─── Cumulative P&L ─── -->
+    <div class="card card-dark">
+      <div class="card-title">Cumulative P&L</div>
+      <div class="card-value" id="cumulativePnlValue" style="font-size:48px">$0.00</div>
+      <div class="card-subtitle" id="cumulativePnlPct">0.00% return</div>
+      <div class="card-subtitle" id="capitalDeployed" style="margin-top:4px; opacity:0.7;">Capital: $0</div>
+    </div>
+
+
+    <!-- ─── Section: Regime Distribution ─── -->
+    <div class="section-header">
+
+      <h2>Market Regime Analysis</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="card chart-container regime-dist-wrapper">
+      <div class="card-title">Regime Distribution</div>
+      <div class="chart-inner">
+        <canvas id="regimeChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card chart-container">
+      <div class="card-title">Confidence Heatmap</div>
+      <div class="chart-inner">
+        <canvas id="confChart"></canvas>
+      </div>
+    </div>
+
+    <!-- ─── Section: 50-Coin Heatmap ─── -->
+    <div class="section-header">
+
+      <h2>Active Positions</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="heatmap-wrapper card">
+      <div class="heatmap-grid" id="heatmapGrid">
+        <div class="empty-state">
+          <div class="icon">📊</div>
+          <p>Waiting for scanner data...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Controls ─── -->
+    <div class="controls-bar">
+      <button class="btn" id="engineToggleBtn" onclick="toggleEngine()"
+        style="background:linear-gradient(135deg,#F59E0B,#D97706); min-width:160px; font-weight:700;">
+        ⏸️ Pause Engine
+      </button>
+      <button class="btn btn-refresh" onclick="triggerCycle()">Run Cycle</button>
+      <button class="btn btn-kill" onclick="deleteAllTrades()"
+        style="background:linear-gradient(135deg,#EF4444,#DC2626)">Delete</button>
+    </div>
+
+    <!-- ─── Section: Live Bot Kernel ─── -->
+    <div class="section-header">
+
+      <h2>Bot Kernel — Live Logs</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="card log-viewer-card">
+      <div class="log-toolbar">
+        <span class="log-status" id="logStatus">● Connected</span>
+        <div class="log-actions">
+          <button class="btn-log" onclick="toggleAutoScroll()" id="autoScrollBtn">Auto-scroll</button>
+          <button class="btn-log" onclick="clearLogs()">Clear</button>
+        </div>
+      </div>
+      <div class="log-output" id="logOutput">
+        <div class="log-empty">Waiting for bot output...</div>
+      </div>
+    </div>
+
+    <!-- ─── Section: Regime Engine Execution Log ─── -->
+    <div class="section-header">
+
+      <h2>Regime Engine — Execution Log</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="exec-timing" style="grid-column:1/-1; display:flex; gap:24px; margin-bottom:8px;">
+      <span class="stat-sub" style="font-size:11px;">⏱ Last run: <strong id="execLastRun">—</strong></span>
+      <span class="stat-sub" style="font-size:11px;">⏭ Next run: <strong id="execNextRun">—</strong></span>
+    </div>
+
+    <div class="positions-table-wrapper card" style="grid-column:1/-1;">
+      <table class="data-table" id="execLogTable">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Cycle</th>
+            <th>Coins Scanned</th>
+            <th>Eligible</th>
+            <th>Deployed</th>
+            <th>Total Trades</th>
+            <th>Closed</th>
+            <th>Exec Time</th>
+          </tr>
+        </thead>
+        <tbody id="execLogBody">
+          <tr>
+            <td colspan="8" style="text-align:center;color:#8899AA;padding:24px;">Waiting for first analysis cycle...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="exec-log-pagination" id="execLogPagination"
+        style="display:flex; align-items:center; justify-content:center; gap:12px; padding:12px 16px; border-top:1px solid rgba(0,0,0,0.06); font-size:13px; color:#5A6A7E;">
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ═══ Footer ═══ -->
+  <footer class="footer">
+    SENTINEL v2.0 — AI Trading Dashboard &copy; 2026 &nbsp;|&nbsp;
+    Real-time WebSocket Updates &nbsp;|&nbsp; HMM-Powered Regime Classification
+  </footer>
+
+  <!-- ═══ Custom Confirm Modal ═══ -->
+  <div id="confirmModal"
+    style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.4); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+    <div
+      style="background:#ffffff; border:1px solid #E2E8F0; border-radius:20px; padding:32px; max-width:420px; width:90%; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+      <div id="confirmIcon" style="font-size:48px; margin-bottom:16px;">⚠️</div>
+      <div id="confirmTitle" style="font-size:18px; font-weight:700; color:#1A2332; margin-bottom:8px;"></div>
+      <div id="confirmMsg" style="font-size:14px; color:#5A6A7E; margin-bottom:24px; line-height:1.5;"></div>
+      <div style="display:flex; gap:12px; justify-content:center;">
+        <button id="confirmNo"
+          style="padding:10px 28px; border-radius:10px; border:1px solid #E2E8F0; background:#F4F7FA; color:#5A6A7E; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
+        <button id="confirmYes"
+          style="padding:10px 28px; border-radius:10px; border:none; background:linear-gradient(135deg,#EF4444,#DC2626); color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/mode-toggle.js"></script>
+  <script src="/app.js"></script>
+</body>
+
+</html>

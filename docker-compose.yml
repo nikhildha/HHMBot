@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  # ── Python Trading Bot ────────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      target: bot
+    container_name: sentinel-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - dashboard
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Node.js Dashboard ────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    container_name: sentinel-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file: .env
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

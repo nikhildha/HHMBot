@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL — Deploy Control</title>
+    <meta name="description" content="Control paper and live trading deployment for the SENTINEL AI trading bot">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        .deploy-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .deploy-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: var(--shadow-card);
+        }
+
+        .deploy-card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-tertiary);
+            margin: 0 0 16px 0;
+        }
+
+        .deploy-full {
+            grid-column: 1 / -1;
+        }
+
+        /* Mode Checkboxes */
+        .mode-options {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            padding: 20px 0;
+        }
+
+        .mode-checkbox-card {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 16px 28px;
+            border-radius: 14px;
+            border: 2px solid var(--border-card);
+            cursor: pointer;
+            transition: all 0.3s;
+            user-select: none;
+            min-width: 180px;
+        }
+
+        .mode-checkbox-card.paper {
+            background: rgba(34, 197, 94, 0.04);
+        }
+
+        .mode-checkbox-card.paper.active {
+            background: rgba(34, 197, 94, 0.08);
+            border-color: var(--accent-green);
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.1);
+        }
+
+        .mode-checkbox-card.live {
+            background: rgba(239, 68, 68, 0.04);
+        }
+
+        .mode-checkbox-card.live.active {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: var(--accent-red);
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.1);
+        }
+
+        .mode-check-box {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            border: 2px solid #CBD5E1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            transition: all 0.3s;
+            flex-shrink: 0;
+        }
+
+        .mode-checkbox-card.paper.active .mode-check-box {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+        }
+
+        .mode-checkbox-card.live.active .mode-check-box {
+            background: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        .mode-check-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .mode-check-title {
+            font-size: 15px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .mode-checkbox-card.paper .mode-check-title {
+            color: var(--accent-green);
+        }
+
+        .mode-checkbox-card.live .mode-check-title {
+            color: var(--accent-red);
+        }
+
+        .mode-check-desc {
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        .mode-banner {
+            padding: 12px 20px;
+            border-radius: 12px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .mode-banner.paper {
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            color: var(--accent-green);
+        }
+
+        .mode-banner.live {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+
+        /* Status Rows */
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .status-row:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .status-value {
+            font-size: 13px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .status-value.ok {
+            color: var(--accent-green);
+        }
+
+        .status-value.error {
+            color: var(--accent-red);
+        }
+
+        .status-value.pending {
+            color: var(--text-tertiary);
+        }
+
+        /* Buttons */
+        .btn-deploy {
+            padding: 10px 24px;
+            border-radius: 10px;
+            border: none;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .btn-test {
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            color: var(--accent-blue);
+        }
+
+        .btn-test:hover {
+            background: rgba(59, 130, 246, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .btn-kill {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            color: var(--accent-red);
+            font-size: 14px;
+            padding: 14px 32px;
+            width: 100%;
+        }
+
+        .btn-kill:hover {
+            background: rgba(239, 68, 68, 0.15);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-refresh {
+            background: rgba(139, 92, 246, 0.08);
+            border: 1px solid rgba(139, 92, 246, 0.25);
+            color: var(--accent-purple);
+        }
+
+        .btn-refresh:hover {
+            background: rgba(139, 92, 246, 0.15);
+            transform: translateY(-1px);
+        }
+
+        /* Preflight Checklist */
+        .checklist-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .checklist-item:last-child {
+            border-bottom: none;
+        }
+
+        .check-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .check-icon.pass {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent-green);
+        }
+
+        .check-icon.fail {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+        }
+
+        .check-icon.pending {
+            background: var(--bg-card-alt);
+            color: var(--text-tertiary);
+        }
+
+        .check-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Log */
+        .deploy-log {
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Inter', monospace;
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        .deploy-log .entry {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .deploy-log .entry .ts {
+            color: var(--accent-blue);
+            margin-right: 8px;
+        }
+
+        /* Confirm Modal */
+        .confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .confirm-box {
+            background: #fff;
+            border-radius: 20px;
+            padding: 32px;
+            max-width: 480px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+        }
+
+        .confirm-box .warn-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+
+        .confirm-box h3 {
+            font-size: 18px;
+            color: #1A2332;
+            margin: 0 0 8px 0;
+        }
+
+        .confirm-box p {
+            font-size: 13px;
+            color: #5A6A7E;
+            line-height: 1.6;
+            margin: 0 0 20px 0;
+        }
+
+        .confirm-box .btn-row {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .confirm-box .btn-cancel {
+            padding: 10px 28px;
+            border-radius: 10px;
+            border: 1px solid #E2E8F0;
+            background: #F4F7FA;
+            color: #5A6A7E;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .confirm-box .btn-confirm-live {
+            padding: 10px 28px;
+            border-radius: 10px;
+            border: none;
+            background: linear-gradient(135deg, #EF4444, #DC2626);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ═══ Header ═══ -->
+    <header class="header">
+        <div class="logo">
+            <div>
+                <div class="logo-text">SENTINEL</div>
+                <div class="logo-subtitle">Deploy Control</div>
+            </div>
+        </div>
+        <nav class="header-nav">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/tradebook" class="nav-link">Tradebook</a>
+            <a href="/charts" class="nav-link">Charts</a>
+            <a href="/backtest" class="nav-link">Backtest</a>
+            <a href="/deploy" class="nav-link active">Deploy</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </nav>
+        <div class="header-right">
+            <span class="timestamp" id="lastUpdate">—</span>
+            <div class="status-pill" id="statusPill">
+                <span class="dot"></span>
+                <span id="statusText">OFFLINE</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══ Main Content ═══ -->
+    <main class="container" style="padding-top: 80px;">
+
+        <!-- Mode Banner -->
+        <div id="modeBanner" class="mode-banner paper" style="max-width:1200px; margin:0 auto 20px auto;">
+            PAPER TRADE MODE — No real orders are placed
+        </div>
+
+        <div class="deploy-grid">
+
+            <!-- ─── Trading Mode ─── -->
+            <div class="deploy-card">
+                <h3>Trading Mode</h3>
+                <div class="mode-options">
+                    <div class="mode-checkbox-card paper active" id="paperModeCard" onclick="togglePaperMode()">
+                        <div class="mode-check-box" id="paperCheckBox">✓</div>
+                        <div class="mode-check-info">
+                            <span class="mode-check-title">Paper</span>
+                            <span class="mode-check-desc">Simulated trades, no real orders</span>
+                        </div>
+                    </div>
+                    <div class="mode-checkbox-card live" id="liveModeCard" onclick="toggleLiveMode()">
+                        <div class="mode-check-box" id="liveCheckBox"></div>
+                        <div class="mode-check-info">
+                            <span class="mode-check-title">Live</span>
+                            <span class="mode-check-desc">Real orders on CoinDCX Futures</span>
+                        </div>
+                    </div>
+                </div>
+                <p style="text-align:center; font-size:12px; color:var(--text-tertiary); margin:12px 0 0 0;">
+                    Enable one or both modes. Paper logs simulated trades.<br>
+                    Live executes on <strong>CoinDCX Futures USDT</strong>.
+                </p>
+            </div>
+
+            <!-- ─── API Connection ─── -->
+            <div class="deploy-card">
+                <h3>CoinDCX API Status</h3>
+                <div class="status-row">
+                    <span class="status-label">API Key</span>
+                    <span class="status-value pending" id="apiKeyStatus">Checking...</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Connection</span>
+                    <span class="status-value pending" id="connStatus">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Network</span>
+                    <span class="status-value pending" id="networkStatus">—</span>
+                </div>
+                <div style="margin-top:16px; display:flex; gap:10px;">
+                    <button class="btn-deploy btn-test" onclick="testConnection()">Test Connection</button>
+                    <button class="btn-deploy btn-refresh" onclick="refreshBalance()">Refresh Balance</button>
+                </div>
+            </div>
+
+            <!-- ─── Account Info ─── -->
+            <div class="deploy-card">
+                <h3>Account Info</h3>
+                <div class="status-row">
+                    <span class="status-label">USDT Balance</span>
+                    <span class="status-value" id="usdtBalance">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Open Positions</span>
+                    <span class="status-value" id="openPositions">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Active Paper Trades</span>
+                    <span class="status-value" id="paperTradeCount">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Active Live Trades</span>
+                    <span class="status-value" id="liveTradeCount">—</span>
+                </div>
+            </div>
+
+            <!-- ─── Pre-flight Checklist ─── -->
+            <div class="deploy-card">
+                <h3>Live Pre-flight Checklist</h3>
+                <div class="checklist-item">
+                    <span class="check-icon pending" id="checkApi">?</span>
+                    <span class="check-text">CoinDCX API key configured &amp; valid</span>
+                </div>
+                <div class="checklist-item">
+                    <span class="check-icon pending" id="checkBalance">?</span>
+                    <span class="check-text">Sufficient USDT balance (&ge; $50)</span>
+                </div>
+                <div class="checklist-item">
+                    <span class="check-icon pending" id="checkMargin">?</span>
+                    <span class="check-text">Margin type set to ISOLATED</span>
+                </div>
+                <div class="checklist-item">
+                    <span class="check-icon pending" id="checkNetwork">?</span>
+                    <span class="check-text">Network: Mainnet (not Testnet)</span>
+                </div>
+            </div>
+
+            <!-- ─── Emergency Controls ─── -->
+            <div class="deploy-card deploy-full">
+                <h3>Emergency Controls</h3>
+                <div style="display:flex; gap:16px; align-items:center;">
+                    <button class="btn-deploy btn-kill" onclick="killSwitch()" id="killBtn">
+                        KILL SWITCH — Close All Live Positions
+                    </button>
+                </div>
+                <p style="font-size:11px; color:var(--text-tertiary); margin:12px 0 0 0; text-align:center;">
+                    This will immediately close ALL open positions on CoinDCX Futures and cancel all open orders.
+                </p>
+            </div>
+
+            <!-- ─── Activity Log ─── -->
+            <div class="deploy-card deploy-full">
+                <h3>Deployment Activity Log</h3>
+                <div class="deploy-log" id="deployLog">
+                    <div class="entry"><span class="ts">[—]</span> Waiting for activity...</div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- ─── Confirm Modal ─── -->
+    <div class="confirm-overlay" id="liveConfirmModal">
+        <div class="confirm-box">
+            <div class="warn-icon">⚠️</div>
+            <h3>Enable LIVE Trading?</h3>
+            <p>
+                This will enable <strong>real order execution</strong> on CoinDCX Futures USDT.<br><br>
+                Real funds will be used. All trades will place <strong>live market orders</strong> with isolated
+                margin.<br><br>
+                Make sure you have tested with paper trading first and reviewed all risk parameters.
+            </p>
+            <div class="btn-row">
+                <button class="btn-cancel" onclick="cancelLiveToggle()">Cancel</button>
+                <button class="btn-confirm-live" onclick="confirmLiveToggle()">Enable Live Trading</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/mode-toggle.js"></script>
+    <script src="/deploy-app.js"></script>
+</body>
+
+</html>
