@@ -284,7 +284,7 @@ def run_single_backtest(df, symbol, btc_regimes=None, mode="walk_forward"):
 if __name__ == "__main__":
     print("\n" + "█" * 110)
     print("  CoinDCX DATA BACKTEST — 1000 Candles")
-    print("  In-Sample vs Walk-Forward Comparison with Conviction Scoring (2x-35x)")
+    print("  In-Sample vs Walk-Forward | 7-Factor Conviction Scoring (10x-35x)")
     print("█" * 110)
     
     # 1. Fetch BTC macro
