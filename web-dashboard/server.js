@@ -1061,20 +1061,32 @@ const ENV_FILE = path.join(__dirname, '..', '.env');
 const { execSync } = require('child_process');
 
 function readEnv() {
+    const env = {};
     try {
         const content = fs.readFileSync(ENV_FILE, 'utf8');
-        const env = {};
         content.split('\n').forEach(line => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return;
             const [key, ...rest] = trimmed.split('=');
             env[key.trim()] = rest.join('=').trim();
         });
-        return env;
-    } catch (e) { return {}; }
+    } catch (e) { /* no .env file — fall through to process.env */ }
+    // Fall back to process.env for any missing keys (Railway sets env vars directly)
+    const importantKeys = ['PAPER_TRADE', 'LIVE_TRADE', 'TESTNET', 'COINDCX_API_KEY', 'COINDCX_API_SECRET',
+        'BINANCE_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'TELEGRAM_ENABLED',
+        'TELEGRAM_NOTIFY_TRADES', 'TELEGRAM_NOTIFY_ALERTS', 'TELEGRAM_NOTIFY_SUMMARY'];
+    for (const key of importantKeys) {
+        if (!env[key] && process.env[key]) env[key] = process.env[key];
+    }
+    return env;
 }
 
 function writeEnv(updates) {
+    // Always update process.env so spawned child processes inherit the change
+    for (const [key, value] of Object.entries(updates)) {
+        process.env[key] = value;
+    }
+    // Also persist to .env file (works locally; on Railway this is in-container only)
     try {
         let content = fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8') : '';
         for (const [key, value] of Object.entries(updates)) {
