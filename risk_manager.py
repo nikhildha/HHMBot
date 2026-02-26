@@ -34,38 +34,46 @@ class RiskManager:
                                   sr_position=None,
                                   vwap_position=None,
                                   oi_change=None,
-                                  volatility=None):
+                                  volatility=None,
+                                  sentiment_score=None):
         """
         Compute a multi-factor conviction score (0-100) for a trade.
-        
-        Factors (weights sum to 100):
-          1. HMM Confidence      (30%) — core model signal
-          2. BTC Macro Alignment  (25%) — does BTC agree with our trade?
-          3. Funding Rate         (15%) — is the opposite side crowded?
-          4. S/R + VWAP Position  (15%) — are we entering at a good level?
-          5. OI Momentum          (10%) — is smart money building our way?
-          6. Volatility Regime     (5%) — is vol tradeable?
-        
+
+        Factors (positive max pts sum to 100):
+          1. HMM Confidence       (25 pts) — core model signal
+          2. BTC Macro Alignment   (20 pts) — does BTC agree with our trade?
+          3. Funding Rate          (12 pts) — is the opposite side crowded?
+          4. S/R + VWAP Position   (12 pts) — are we entering at a good level?
+          5. OI Momentum            (8 pts) — is smart money building our way?
+          6. Volatility Regime       (5 pts) — is vol tradeable?
+          7. Sentiment Score        (18 pts) — social/news sentiment signal [NEW]
+
+        Parameters
+        ----------
+        sentiment_score : float | None
+            Composite sentiment from SentimentEngine, range -1 to +1.
+            Pass -1.0 if a ALERT (hack/exploit/scam) was detected by the engine.
+
         Returns
         -------
         float : conviction score 0-100
         """
         score = 0.0
-        
-        # ─── 1. HMM Confidence (30 pts max) ──────────────────────────
-        # 92% → 0pts, 96% → 15pts, 99% → 25pts, 100% → 30pts
+
+        # ─── 1. HMM Confidence (25 pts max) ──────────────────────────
+        # 92% → 0pts, 96% → 12pts, 99% → 21pts, 100% → 25pts
         if confidence >= 0.92:
-            conf_score = min(30, (confidence - 0.92) / 0.08 * 30)
+            conf_score = min(25, (confidence - 0.92) / 0.08 * 25)
             score += conf_score
-        
-        # ─── 2. BTC Macro Alignment (25 pts max) ─────────────────────
+
+        # ─── 2. BTC Macro Alignment (20 pts max) ─────────────────────
         if btc_regime is not None:
             if btc_regime == config.REGIME_CRASH:
                 score -= 15  # Strong penalty — BTC crashing
             elif side == 'LONG' and btc_regime == config.REGIME_BULL:
-                score += 25  # Perfect alignment
+                score += 20  # Perfect alignment
             elif side == 'SHORT' and btc_regime == config.REGIME_BEAR:
-                score += 25  # Perfect alignment
+                score += 20  # Perfect alignment
             elif side == 'LONG' and btc_regime == config.REGIME_BEAR:
                 score -= 10  # Counter-BTC — dangerous
             elif side == 'SHORT' and btc_regime == config.REGIME_BULL:
@@ -73,59 +81,59 @@ class RiskManager:
             elif btc_regime == config.REGIME_CHOP:
                 score += 5   # Neutral — slight bonus for coin-specific signal
         else:
-            score += 10  # No BTC data → give neutral credit
-        
-        # ─── 3. Funding Rate (15 pts max) ────────────────────────────
+            score += 8  # No BTC data → give partial neutral credit
+
+        # ─── 3. Funding Rate (12 pts max) ────────────────────────────
         if funding_rate is not None:
             if side == 'LONG' and funding_rate < -0.0001:
-                score += 15  # Shorts crowded → squeeze potential
+                score += 12  # Shorts crowded → squeeze potential
             elif side == 'LONG' and funding_rate > 0.0005:
                 score -= 5   # Longs crowded → risky
             elif side == 'SHORT' and funding_rate > 0.0003:
-                score += 15  # Longs crowded → dump potential
+                score += 12  # Longs crowded → dump potential
             elif side == 'SHORT' and funding_rate < -0.0003:
                 score -= 5   # Shorts crowded → risky
             else:
-                score += 7   # Neutral funding
+                score += 6   # Neutral funding
         else:
-            score += 7  # No data → neutral
-        
-        # ─── 4. S/R + VWAP Position (15 pts max) ─────────────────────
+            score += 6  # No data → neutral
+
+        # ─── 4. S/R + VWAP Position (12 pts max) ─────────────────────
         sr_score = 0
         if sr_position is not None:
             # sr_position: -1 = at support, +1 = at resistance
             if side == 'LONG':
-                sr_score += max(0, (1 - sr_position) / 2 * 8)  # Closer to support = more pts
+                sr_score += max(0, (1 - sr_position) / 2 * 6)  # Closer to support = more pts
             else:
-                sr_score += max(0, (1 + sr_position) / 2 * 8)  # Closer to resistance = more pts
-        else:
-            sr_score += 4
-        
-        if vwap_position is not None:
-            if side == 'LONG' and vwap_position < 0:
-                sr_score += 7  # Below VWAP — buying cheap
-            elif side == 'SHORT' and vwap_position > 0:
-                sr_score += 7  # Above VWAP — selling expensive
-            else:
-                sr_score += 3  # Neutral
+                sr_score += max(0, (1 + sr_position) / 2 * 6)  # Closer to resistance = more pts
         else:
             sr_score += 3
-        
-        score += min(15, sr_score)
-        
-        # ─── 5. OI Momentum (10 pts max) ─────────────────────────────
+
+        if vwap_position is not None:
+            if side == 'LONG' and vwap_position < 0:
+                sr_score += 6  # Below VWAP — buying cheap
+            elif side == 'SHORT' and vwap_position > 0:
+                sr_score += 6  # Above VWAP — selling expensive
+            else:
+                sr_score += 2  # Neutral
+        else:
+            sr_score += 2
+
+        score += min(12, sr_score)
+
+        # ─── 5. OI Momentum (8 pts max) ──────────────────────────────
         if oi_change is not None:
             if side == 'LONG' and oi_change > 0.02:
-                score += 10  # OI building → conviction rising
+                score += 8   # OI building → conviction rising
             elif side == 'SHORT' and oi_change < -0.02:
-                score += 10  # OI dropping → panic selling
+                score += 8   # OI dropping → panic selling
             elif abs(oi_change) < 0.01:
-                score += 5   # OI stable → neutral
+                score += 4   # OI stable → neutral
             else:
-                score += 3   # Slight adverse OI
+                score += 2   # Slight adverse OI
         else:
-            score += 5  # No data → neutral
-        
+            score += 4  # No data → neutral
+
         # ─── 6. Volatility Regime (5 pts max) ────────────────────────
         if volatility is not None:
             if 0.005 < volatility < 0.03:
@@ -136,7 +144,31 @@ class RiskManager:
                 score += 3   # Low vol → less opportunity
         else:
             score += 3  # No data → neutral
-        
+
+        # ─── 7. Sentiment Score (18 pts max) ─────────────────────────
+        # sentiment_score in [-1, +1]; pass -1.0 when SentimentEngine fires an ALERT.
+        if sentiment_score is not None:
+            if sentiment_score <= -1.0:
+                # ALERT detected (hack/exploit/scam) — hard veto, never trade
+                return 0
+            elif sentiment_score < config.SENTIMENT_VETO_THRESHOLD:
+                # Strong negative sentiment (e.g. regulatory ban news)
+                score -= 15
+            elif sentiment_score < -0.2:
+                # Moderate negative
+                score -= 5
+            elif sentiment_score < 0.2:
+                # Neutral — partial credit
+                score += 5
+            elif sentiment_score < config.SENTIMENT_STRONG_POS:
+                # Moderate positive
+                score += 12
+            else:
+                # Strongly positive — full bonus
+                score += 18
+        else:
+            score += 5  # No sentiment data → neutral partial credit
+
         return max(0, min(100, score))
     
     @staticmethod

@@ -19,6 +19,7 @@ from sideways_strategy import evaluate_mean_reversion
 from coin_scanner import get_top_coins_by_volume
 import tradebook
 import telegram as tg
+import sentiment_engine
 
 # ─── Logging Setup ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -64,6 +65,16 @@ class RegimeMasterBot:
 
         # ── Startup: sync _active_positions from tradebook ──────────
         self._load_positions_from_tradebook()
+
+        # ── Sentiment Engine (lazy singleton) ─────────────────────────
+        self._sentiment = None
+        if config.SENTIMENT_ENABLED:
+            try:
+                self._sentiment = sentiment_engine.get_engine()
+                logger.info("📰 Sentiment Engine loaded (VADER%s)",
+                            " + FinBERT" if config.SENTIMENT_USE_FINBERT else " only")
+            except Exception as e:
+                logger.warning("⚠️ Sentiment Engine failed to load: %s", e)
 
     # ─── Main Loop ───────────────────────────────────────────────────────────
 
@@ -529,6 +540,24 @@ class RegimeMasterBot:
             else:
                 feature_snapshot[feat_col] = 0.0
 
+        # ── Sentiment signal ──────────────────────────────────────
+        sentiment_score = None
+        sentiment_data = {}
+        if self._sentiment:
+            try:
+                sig = self._sentiment.get_coin_sentiment(symbol)
+                sentiment_score = sig.effective_score
+                sentiment_data = {
+                    "sentiment_score": round(sig.score, 4),
+                    "sentiment_conf": round(sig.confidence, 2),
+                    "sentiment_buzz": sig.buzz_velocity,
+                    "sentiment_alert": sig.alert,
+                    "sentiment_alert_reason": sig.alert_reason,
+                    "fear_greed": sig.fear_greed,
+                }
+            except Exception as e:
+                logger.debug("Sentiment fetch failed for %s: %s", symbol, e)
+
         self._coin_states[symbol] = {
             "symbol": symbol,
             "regime": regime_name,
@@ -537,6 +566,7 @@ class RegimeMasterBot:
             "action": "ANALYZING",
             "macro_regime": macro_regime_name,
             "features": feature_snapshot,
+            **sentiment_data,
         }
 
         # ── CRASH on either timeframe → skip ──
@@ -583,11 +613,28 @@ class RegimeMasterBot:
             self._coin_states[symbol]["action"] = "CHOP_NO_SIGNAL"
             return None
 
-        # ── TREND (BULL / BEAR) ──
-        leverage = self.risk.get_dynamic_leverage(conf, regime)
+        # ── TREND (BULL / BEAR): conviction-based leverage ──────────
+        # Map 4h macro regime name → int (used as BTC-proxy for conviction scorer)
+        _name_to_int = {v: k for k, v in config.REGIME_NAMES.items()}
+        btc_proxy = _name_to_int.get(macro_regime_name) if macro_regime_name else None
+        funding = (df_1h_feat["funding_rate"].iloc[-1]
+                   if "funding_rate" in df_1h_feat.columns else None)
+
+        conviction = self.risk.compute_conviction_score(
+            conf, regime, side,
+            btc_regime=btc_proxy,
+            funding_rate=funding,
+            sr_position=feature_snapshot.get("sr_position"),
+            vwap_position=feature_snapshot.get("vwap_position"),
+            oi_change=feature_snapshot.get("oi_change"),
+            volatility=feature_snapshot.get("volatility"),
+            sentiment_score=sentiment_score,
+        )
+        leverage = self.risk.get_conviction_leverage(conviction)
         if leverage == 0:
-            self._coin_states[symbol]["action"] = "LOW_CONFIDENCE"
+            self._coin_states[symbol]["action"] = "LOW_CONVICTION"
             return None
+        self._coin_states[symbol]["conviction"] = round(conviction, 1)
 
         current_atr = df_1h_feat["atr"].iloc[-1] if "atr" in df_1h_feat.columns else 0
 
@@ -609,6 +656,16 @@ class RegimeMasterBot:
             side = "SELL"
         else:
             return None
+
+        # ── Sentiment Veto ─────────────────────────────────────────
+        if sentiment_score is not None:
+            if sentiment_score <= config.SENTIMENT_VETO_THRESHOLD:
+                self._coin_states[symbol]["action"] = (
+                    f"SENTIMENT_VETO ({sentiment_score:+.2f})"
+                    if not sentiment_data.get("sentiment_alert")
+                    else f"ALERT_VETO: {sentiment_data.get('sentiment_alert_reason', '')[:40]}"
+                )
+                return None
 
         # 15m momentum filter (fetch 15m data)
         try:
