@@ -32,8 +32,8 @@ import pandas as pd
 import requests
 
 import config
-from sentiment_engine import SentimentEngine
-from sentiment_sources import CryptoPanicSource, COIN_KEYWORDS
+from sentiment_engine import SentimentEngine  # type: ignore[import]
+from sentiment_sources import CryptoPanicSource, RSSNewsSource, COIN_KEYWORDS  # type: ignore[import]
 
 logger = logging.getLogger("SentimentBacktester")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(message)s")
@@ -79,7 +79,7 @@ class ValidationResult:
         ]
         if self.source_ics:
             lines.append(" Source IC Ranking:")
-            for src, ic in sorted(self.source_ics.items(), key=lambda x: -abs(x[1])):
+            for src, ic in sorted(self.source_ics.items(), key=lambda x: abs(float(x[1])), reverse=True):
                 lines.append(f"   {src:<20} IC={ic:+.4f}")
         lines.append(f"{'─'*58}")
         return "\n".join(lines)
@@ -324,7 +324,7 @@ def validate_coin(coin: str, days: int = 30) -> Optional[ValidationResult]:
         if row["score"] > ENTRY_THRESHOLD:
             strat_returns.append(row["log_ret_4h"])
         elif row["score"] < -ENTRY_THRESHOLD:
-            strat_returns.append(-row["log_ret_4h"])   # short
+            strat_returns.append(0.0 - float(row["log_ret_4h"]))   # short
         else:
             strat_returns.append(0.0)
 
