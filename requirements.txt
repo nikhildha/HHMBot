@@ -5,13 +5,3 @@ python-binance>=1.0.19
 streamlit>=1.30.0
 plotly>=5.18.0
 python-dotenv>=1.0.0
-
-# ─── Sentiment Engine dependencies ───────────────────────────────────────────
-feedparser>=6.0.0          # RSS feed parsing
-vaderSentiment>=3.3.2      # Fast rule-based NLP (social media optimised)
-requests>=2.28.0            # HTTP client (likely already installed)
-# Optional — higher accuracy NLP for news articles (downloads ~400MB model on first run):
-# transformers>=4.35.0
-# torch>=2.0.0
-# Optional — Reddit social data (requires API keys in .env):
-# praw>=7.7.0

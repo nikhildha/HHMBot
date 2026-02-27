@@ -110,7 +110,7 @@ function updateStats(multi, tradebook) {
 
     // ── Cumulative P&L card ──────────────────────────────────────
     if (tradebook?.trades) {
-        const MAX_CAPITAL = 1500;  // Total portfolio capital (15 slots × $100)
+        const MAX_CAPITAL = 2500;  // Total portfolio capital
         const CAPITAL_PER_TRADE = 100;
 
         let realizedPnl = 0;
@@ -635,6 +635,95 @@ function updateTradeLog(trades) {
     area.innerHTML = html;
 }
 
+// ─── Regime Drivers — Feature Heatmap ────────────────────────────────────────
+function updateFeatureHeatmap(coinStates) {
+    const area = document.getElementById('featureHeatmapArea');
+    if (!area) return;
+
+    const entries = coinStates ? Object.values(coinStates) : [];
+    const withFeatures = entries.filter(c => c.features && Object.keys(c.features).length > 0);
+
+    if (withFeatures.length === 0) {
+        area.innerHTML = `<div class="empty-state"><div class="icon">🧠</div><p>Waiting for engine analysis cycle...</p></div>`;
+        return;
+    }
+
+    // Sort by confidence descending
+    withFeatures.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+
+    const featureKeys = ['log_return', 'volatility', 'volume_change', 'rsi_norm'];
+    const featureLabels = {
+        log_return: 'Log Return',
+        volatility: 'Volatility',
+        volume_change: 'Vol Change',
+        rsi_norm: 'RSI Norm',
+    };
+
+    // Compute min/max for each feature for color scaling
+    const stats = {};
+    featureKeys.forEach(k => {
+        const vals = withFeatures.map(c => c.features[k] || 0);
+        stats[k] = {
+            min: Math.min(...vals),
+            max: Math.max(...vals),
+        };
+    });
+
+    function featureCellColor(key, value) {
+        // log_return + rsi_norm: green = positive (bullish), red = negative (bearish)
+        // volatility: low = calm (blue-ish), high = volatile (orange)
+        // volume_change: green = spike, red = drop
+        const range = stats[key].max - stats[key].min;
+        const norm = range > 0 ? (value - stats[key].min) / range : 0.5;
+
+        if (key === 'volatility') {
+            // Low vol = cool blue, high vol = hot orange
+            const r = Math.round(59 + norm * 186);
+            const g = Math.round(130 - norm * 40);
+            const b = Math.round(246 - norm * 235);
+            return `rgba(${r}, ${g}, ${b}, ${0.15 + norm * 0.25})`;
+        }
+        // Diverging: negative = red, zero = neutral, positive = green
+        if (value > 0) {
+            const intensity = range > 0 ? Math.min(Math.abs(value) / Math.max(Math.abs(stats[key].max), 0.001), 1) : 0.5;
+            return `rgba(34, 197, 94, ${0.1 + intensity * 0.35})`;
+        } else if (value < 0) {
+            const intensity = range > 0 ? Math.min(Math.abs(value) / Math.max(Math.abs(stats[key].min), 0.001), 1) : 0.5;
+            return `rgba(239, 68, 68, ${0.1 + intensity * 0.35})`;
+        }
+        return 'rgba(142, 155, 179, 0.1)';
+    }
+
+    let html = `<table class="feature-heatmap-table">
+    <thead><tr>
+      <th>Coin</th><th>Regime</th><th>Conf</th>`;
+    featureKeys.forEach(k => { html += `<th>${featureLabels[k]}</th>`; });
+    html += `</tr></thead><tbody>`;
+
+    withFeatures.forEach(coin => {
+        const sym = (coin.symbol || '').replace('USDT', '');
+        const regime = coin.regime || 'CHOP';
+        const info = getRegimeInfo(regime);
+        const conf = ((coin.confidence || 0) * 100).toFixed(0);
+
+        html += `<tr>
+      <td class="fh-symbol"><strong>${sym}</strong></td>
+      <td><span class="regime-badge badge-${info.class}">${info.emoji} ${regime.split('/')[0]}</span></td>
+      <td class="fh-conf">${conf}%</td>`;
+
+        featureKeys.forEach(k => {
+            const val = coin.features[k] || 0;
+            const bg = featureCellColor(k, val);
+            const display = val >= 0 ? `+${val.toFixed(4)}` : val.toFixed(4);
+            html += `<td class="fh-cell" style="background:${bg}">${display}</td>`;
+        });
+        html += `</tr>`;
+    });
+
+    html += `</tbody></table>`;
+    area.innerHTML = html;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MASTER UPDATE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -670,6 +759,7 @@ function updateAll(data) {
     updateTicker(liveScanner);
     updateRegimeChart(liveScanner);
     updateConfChart(liveScanner);
+    updateFeatureHeatmap(multiState?.coin_states);
     updateTradeLog(tradeLog);
     addExecLogEntry(multiState);
 }
@@ -709,6 +799,7 @@ socket.on('full-update', (data) => {
         updateTicker(liveScanner);
         updateRegimeChart(liveScanner);
         updateConfChart(liveScanner);
+        updateFeatureHeatmap(multiState?.coin_states);
         updateTradeLog(tradeLog);
         addExecLogEntry(multiState);
         return;
@@ -745,8 +836,8 @@ socket.on('multi-update', (multi) => {
             updateTicker({ coins });
             updateRegimeChart({ coins });
             updateConfChart({ coins });
-            renderFeatureHeatmap(multi.coin_states);
         }
+        updateFeatureHeatmap(multi.coin_states);
     }
 });
 
@@ -1287,97 +1378,5 @@ window.addEventListener('mode-change', (e) => {
 // On initial load, check mode
 if (isLiveMode()) {
     startLiveRefresh();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FEATURE HEATMAP — Coin × Feature color-coded grid
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function renderFeatureHeatmap(coinStates) {
-    const tbody = document.getElementById('featureHeatmapBody');
-    if (!tbody || !coinStates) return;
-
-    const entries = Object.entries(coinStates);
-    if (entries.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#94A3B8;padding:32px;">No coin data yet...</td></tr>';
-        return;
-    }
-
-    // Feature columns with their config for color coding
-    const featureKeys = [
-        { key: 'log_return', bull: v => v > 0.002, strongBull: v => v > 0.01, bear: v => v < -0.002, strongBear: v => v < -0.01 },
-        { key: 'volatility', bull: v => v > 0.01 && v < 0.025, strongBull: () => false, bear: v => v > 0.04, strongBear: v => v > 0.06 },
-        { key: 'volume_change', bull: v => v > 0.3, strongBull: v => v > 1.0, bear: v => v < -0.3, strongBear: v => v < -1.0 },
-        { key: 'rsi_norm', bull: v => v > 0.1, strongBull: v => v > 0.4, bear: v => v < -0.1, strongBear: v => v < -0.4 },
-        { key: 'vwap_position', bull: v => v < -0.3, strongBull: v => v < -1.0, bear: v => v > 0.3, strongBear: v => v > 1.0 },
-        { key: 'sr_position', bull: v => v < -0.3, strongBull: v => v < -0.7, bear: v => v > 0.3, strongBear: v => v > 0.7 },
-        { key: 'oi_change', bull: v => v > 0.02, strongBull: v => v > 0.05, bear: v => v < -0.02, strongBear: v => v < -0.05 },
-        { key: 'funding_norm', bull: v => v < -0.5, strongBull: v => v < -1.0, bear: v => v > 0.5, strongBear: v => v > 1.0 },
-    ];
-
-    function getFeatureClass(feat, value) {
-        if (value === 0 || value === null || value === undefined) return 'feat-neutral';
-        if (feat.strongBull(value)) return 'feat-strong-bull';
-        if (feat.strongBear(value)) return 'feat-strong-bear';
-        if (feat.bull(value)) return 'feat-bull';
-        if (feat.bear(value)) return 'feat-bear';
-        return 'feat-neutral';
-    }
-
-    function getRegimeClass(regime) {
-        if (!regime) return '';
-        const r = regime.toLowerCase();
-        if (r.includes('bull')) return 'bull';
-        if (r.includes('bear')) return 'bear';
-        if (r.includes('chop') || r.includes('side')) return 'chop';
-        if (r.includes('crash')) return 'crash';
-        return '';
-    }
-
-    function getActionClass(action) {
-        if (!action) return 'skip';
-        const a = action.toUpperCase();
-        if (a.includes('ELIGIBLE') || a.includes('MEAN_REV')) return 'eligible';
-        if (a.includes('ACTIVE')) return 'active';
-        return 'skip';
-    }
-
-    function formatAction(action) {
-        if (!action) return '—';
-        return action.replace(/_/g, ' ').replace('15M FILTER ', '').replace('SKIP', '⏭');
-    }
-
-    // Sort: eligible first, then by confidence descending
-    const sorted = entries.sort((a, b) => {
-        const aElg = (a[1].action || '').includes('ELIGIBLE') ? 0 : 1;
-        const bElg = (b[1].action || '').includes('ELIGIBLE') ? 0 : 1;
-        if (aElg !== bElg) return aElg - bElg;
-        return (b[1].confidence || 0) - (a[1].confidence || 0);
-    });
-
-    let html = '';
-    for (const [symbol, coin] of sorted) {
-        const features = coin.features || {};
-        const conf = coin.confidence || 0;
-        const confPct = (conf * 100).toFixed(1);
-        const confClass = conf >= 0.95 ? 'conf-high' : conf >= 0.85 ? 'conf-mid' : 'conf-low';
-
-        html += '<tr>';
-        html += `<td>${symbol.replace('USDT', '')}</td>`;
-        html += `<td><span class="hm-regime ${getRegimeClass(coin.regime)}">${coin.regime || '—'}</span></td>`;
-        html += `<td class="${confClass}">${confPct}%</td>`;
-
-        for (const feat of featureKeys) {
-            const val = features[feat.key];
-            const cls = getFeatureClass(feat, val);
-            const display = val !== undefined && val !== null ? val.toFixed(3) : '—';
-            html += `<td><span class="feat-cell ${cls}">${display}</span></td>`;
-        }
-
-        html += `<td><span class="hm-action ${getActionClass(coin.action)}">${formatAction(coin.action)}</span></td>`;
-        html += '</tr>';
-    }
-
-    tbody.innerHTML = html;
 }
 

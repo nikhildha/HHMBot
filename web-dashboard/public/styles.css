@@ -863,6 +863,78 @@ body::before {
   animation: crash-blink 1.5s infinite;
 }
 
+/* ─── Regime Drivers — Feature Heatmap ────────────────────────────────────────── */
+.feature-heatmap-wrapper {
+  grid-column: 1 / -1;
+}
+
+.feature-heatmap-scroll {
+  overflow-x: auto;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.feature-heatmap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 640px;
+}
+
+.feature-heatmap-table thead th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-tertiary);
+  border-bottom: 2px solid var(--border-light);
+  background: var(--bg-card-alt);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.feature-heatmap-table tbody tr {
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s ease;
+}
+
+.feature-heatmap-table tbody tr:hover {
+  background: var(--bg-card-alt);
+}
+
+.feature-heatmap-table td {
+  padding: 8px 14px;
+  color: var(--text-primary);
+}
+
+.fh-symbol {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.fh-conf {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent-blue);
+}
+
+.fh-cell {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  border-radius: 4px;
+  min-width: 90px;
+  transition: transform 0.15s ease;
+}
+
+.fh-cell:hover {
+  transform: scale(1.05);
+}
+
 /* ─── Chart Container ─────────────────────────────────────────────────────────── */
 .chart-container {
   grid-column: span 2;
@@ -1243,164 +1315,4 @@ body::before {
 
 .log-line.log-debug {
   color: #6B7280;
-}
-
-/* ─── Feature Heatmap ────────────────────────────────────────────────────────── */
-.feature-heatmap-card {
-  padding: 20px;
-}
-
-.feature-heatmap-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  font-family: 'Inter', -apple-system, sans-serif;
-}
-
-.feature-heatmap-table thead th {
-  padding: 10px 8px;
-  text-align: center;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-tertiary);
-  border-bottom: 2px solid var(--border-light);
-  background: var(--bg-card-alt);
-  white-space: nowrap;
-  cursor: help;
-}
-
-.feature-heatmap-table thead th:first-child {
-  text-align: left;
-  border-radius: var(--radius-sm) 0 0 0;
-}
-
-.feature-heatmap-table thead th:last-child {
-  border-radius: 0 var(--radius-sm) 0 0;
-}
-
-.feature-heatmap-table tbody tr {
-  border-bottom: 1px solid var(--border-light);
-  transition: background 0.15s ease;
-}
-
-.feature-heatmap-table tbody tr:hover {
-  background: var(--bg-card-alt);
-}
-
-.feature-heatmap-table td {
-  padding: 8px 6px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  transition: background 0.2s ease;
-}
-
-.feature-heatmap-table td:first-child {
-  text-align: left;
-  font-weight: 700;
-  color: var(--text-primary);
-  padding-left: 12px;
-}
-
-/* Color-coded feature cells */
-.feat-cell {
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-weight: 600;
-  min-width: 52px;
-  display: inline-block;
-}
-
-.feat-bull {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16A34A;
-}
-
-.feat-strong-bull {
-  background: rgba(34, 197, 94, 0.25);
-  color: #15803D;
-}
-
-.feat-bear {
-  background: rgba(239, 68, 68, 0.12);
-  color: #DC2626;
-}
-
-.feat-strong-bear {
-  background: rgba(239, 68, 68, 0.25);
-  color: #B91C1C;
-}
-
-.feat-neutral {
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--text-tertiary);
-}
-
-/* Regime badge in heatmap */
-.hm-regime {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-
-.hm-regime.bull {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16A34A;
-}
-
-.hm-regime.bear {
-  background: rgba(239, 68, 68, 0.12);
-  color: #DC2626;
-}
-
-.hm-regime.chop {
-  background: rgba(245, 158, 11, 0.12);
-  color: #D97706;
-}
-
-.hm-regime.crash {
-  background: rgba(220, 38, 38, 0.15);
-  color: #B91C1C;
-}
-
-/* Action badge in heatmap */
-.hm-action {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-
-.hm-action.eligible {
-  color: #16A34A;
-}
-
-.hm-action.skip {
-  color: var(--text-tertiary);
-}
-
-.hm-action.active {
-  color: var(--accent-blue);
-}
-
-/* Conf column coloring */
-.conf-high {
-  color: #16A34A;
-  font-weight: 700;
-}
-
-.conf-mid {
-  color: #D97706;
-  font-weight: 600;
-}
-
-.conf-low {
-  color: #DC2626;
-  font-weight: 600;
 }

@@ -842,7 +842,7 @@ function updateTradebookWithPrices(prices) {
         const totalRealized = closed.reduce((s, t) => s + (t.realized_pnl || 0), 0);
         const totalUnrealized = active.reduce((s, t) => s + (t.unrealized_pnl || 0), 0);
 
-        const MAX_CAPITAL = 1500;
+        const MAX_CAPITAL = 2500;
         const deployedCapital = active.length * 100;
         const losses = closed.filter(t => (t.realized_pnl || 0) < 0);
         const closedPnls = closed.map(t => t.realized_pnl || 0);
@@ -1385,7 +1385,7 @@ app.get('/api/config', (req, res) => {
 
         const config = {
             // Trading
-            PAPER_MAX_CAPITAL: num('PAPER_MAX_CAPITAL', 1500),
+            PAPER_MAX_CAPITAL: num('PAPER_MAX_CAPITAL', 2500),
             PRIMARY_SYMBOL: extract('PRIMARY_SYMBOL', 'BTCUSDT'),
 
             // Timeframes
@@ -1456,7 +1456,7 @@ app.get('/api/config', (req, res) => {
             ERROR_RETRY_SECONDS: num('ERROR_RETRY_SECONDS', 60),
 
             // Multi-Coin
-            MAX_CONCURRENT_POSITIONS: num('MAX_CONCURRENT_POSITIONS', 15),
+            MAX_CONCURRENT_POSITIONS: num('MAX_CONCURRENT_POSITIONS', 25),
             TOP_COINS_LIMIT: num('TOP_COINS_LIMIT', 50),
             CAPITAL_PER_COIN_PCT: num('CAPITAL_PER_COIN_PCT', 0.03),
             SCAN_INTERVAL_CYCLES: num('SCAN_INTERVAL_CYCLES', 4),
@@ -1621,13 +1621,13 @@ app.post('/api/config/preset', (req, res) => {
                 VOL_MIN_ATR_PCT: 0.008, VOL_MAX_ATR_PCT: 0.03, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
             balanced: {
-                RISK_PER_TRADE: 0.02, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 20, LEVERAGE_LOW: 10,
+                RISK_PER_TRADE: 0.02, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 25, LEVERAGE_LOW: 15,
                 MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.96, CONFIDENCE_LOW: 0.92,
                 VOL_MIN_ATR_PCT: 0.005, VOL_MAX_ATR_PCT: 0.04, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
             aggressive: {
-                RISK_PER_TRADE: 0.03, LEVERAGE_HIGH: 35, LEVERAGE_MODERATE: 25, LEVERAGE_LOW: 15,
-                MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.96, CONFIDENCE_LOW: 0.92,
+                RISK_PER_TRADE: 0.04, LEVERAGE_HIGH: 50, LEVERAGE_MODERATE: 35, LEVERAGE_LOW: 25,
+                MAX_LOSS_PER_TRADE_PCT: -30, CONFIDENCE_HIGH: 0.99, CONFIDENCE_MEDIUM: 0.97, CONFIDENCE_LOW: 0.95,
                 VOL_MIN_ATR_PCT: 0.003, VOL_MAX_ATR_PCT: 0.06, TRAILING_SL_ENABLED: true, TRAILING_TP_ENABLED: true,
             },
         };
@@ -1646,6 +1646,52 @@ app.post('/api/config/preset', (req, res) => {
     }
 });
 
+
+// ─── Intelligence API ─────────────────────────────────────────────────────────
+app.get('/api/intelligence', (req, res) => {
+    const multiState = readJSON('multi_bot_state.json') || {};
+    const coinStates = multiState.coin_states || {};
+
+    // Extract per-coin sentiment + orderflow from bot's last analysis cycle
+    const sentimentCoins = {};
+    const orderflowCoins = {};
+    const alerts = [];
+
+    for (const [sym, state] of Object.entries(coinStates)) {
+        const coin = sym.replace('USDT','').replace('BUSD','');
+        if (state.sentiment !== undefined && state.sentiment !== null) {
+            sentimentCoins[sym] = { coin, score: parseFloat(state.sentiment), action: state.action || '' };
+        }
+        if (state.orderflow !== undefined && state.orderflow !== null) {
+            orderflowCoins[sym] = { coin, score: parseFloat(state.orderflow), conviction: state.conviction };
+        }
+        if ((state.action || '').startsWith('SENTIMENT_ALERT')) {
+            alerts.push({ symbol: sym, reason: state.action.replace('SENTIMENT_ALERT:', '') });
+        }
+    }
+
+    // Market bias = average of all coin sentiment scores
+    const scores = Object.values(sentimentCoins).map(c => c.score);
+    const marketBias = scores.length > 0 ? (scores.reduce((a,b)=>a+b,0)/scores.length) : null;
+
+    // Last 100 sentiment log entries (most recent first)
+    const rawLog = readCSV('sentiment_log.csv');
+    const sentLog = rawLog.slice(-100).reverse().map(r => ({
+        timestamp: r.timestamp || r.ts || '',
+        coin: (r.coin || '').toUpperCase(),
+        score: parseFloat(r.score || 0),
+        sources: r.sources || r.source || '',
+        article_count: parseInt(r.article_count || r.articles || 0),
+        confidence: parseFloat(r.confidence || 0),
+    }));
+
+    res.json({
+        timestamp: multiState.timestamp || null,
+        cycle: multiState.cycle || 0,
+        sentiment: { coins: sentimentCoins, market_bias: marketBias, log: sentLog, alerts },
+        orderflow: { coins: orderflowCoins },
+    });
+});
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -1669,6 +1715,10 @@ app.get('/deploy', (req, res) => {
 
 app.get('/settings', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+});
+
+app.get('/intelligence', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'intelligence.html'));
 });
 
 // ─── Start server ────────────────────────────────────────────────────────────

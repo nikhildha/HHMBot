@@ -82,7 +82,7 @@
     <div class="card card-dark">
       <div class="card-title">Active Positions</div>
       <div class="card-value cyan" id="activePositions" style="font-size:72px">—</div>
-      <div class="card-subtitle" id="maxSlotsSub">Max concurrent slots: 15</div>
+      <div class="card-subtitle" id="maxSlotsSub">Max concurrent slots: 25</div>
     </div>
 
     <!-- ─── Cumulative P&L ─── -->
@@ -115,6 +115,22 @@
       </div>
     </div>
 
+    <!-- ─── Section: Regime Drivers — Feature Heatmap ─── -->
+    <div class="section-header">
+      <h2>Regime Drivers — Feature Heatmap</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="card feature-heatmap-wrapper" style="grid-column: 1 / -1;">
+      <div class="card-title">HMM Feature Values per Coin</div>
+      <div class="feature-heatmap-scroll" id="featureHeatmapArea">
+        <div class="empty-state">
+          <div class="icon">🧠</div>
+          <p>Waiting for engine analysis cycle...</p>
+        </div>
+      </div>
+    </div>
+
     <!-- ─── Section: 50-Coin Heatmap ─── -->
     <div class="section-header">
 
@@ -129,44 +145,6 @@
           <p>Waiting for scanner data...</p>
         </div>
       </div>
-    </div>
-
-    <!-- ─── Regime Drivers — Feature Heatmap ─── -->
-    <div class="section-header">
-      <h2>Regime Drivers — Feature Heatmap</h2>
-      <span class="line"></span>
-    </div>
-
-    <div class="card feature-heatmap-card" style="grid-column:1/-1; overflow-x:auto;">
-      <div class="feature-heatmap-toolbar"
-        style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <span style="font-size:11px; color:#5A6A7E;">Color: 🟢 bullish · 🔴 bearish · ⚪ neutral — refreshes each engine
-          cycle</span>
-      </div>
-      <table class="feature-heatmap-table" id="featureHeatmapTable">
-        <thead>
-          <tr>
-            <th>Coin</th>
-            <th>Regime</th>
-            <th>Conf</th>
-            <th title="log(close/prev_close)">LogRet</th>
-            <th title="(high-low)/close">Vol</th>
-            <th title="log(vol/prev_vol)">VolΔ</th>
-            <th title="(RSI-50)/50">RSI</th>
-            <th title="(close-VWAP)/ATR">VWAP</th>
-            <th title="S/R position [-1,+1]">S/R</th>
-            <th title="log(OI/prev_OI)">OI</th>
-            <th title="z-scored funding">Fund</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="featureHeatmapBody">
-          <tr>
-            <td colspan="12" style="text-align:center;color:#94A3B8;padding:32px;">Waiting for first analysis cycle...
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </div>
 
     <!-- ─── Controls ─── -->

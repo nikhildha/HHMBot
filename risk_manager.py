@@ -25,172 +25,7 @@ class RiskManager:
         self.equity_history = []   # List of (timestamp, balance) tuples
         self._killed = False
 
-    # ─── Conviction Scoring System ─────────────────────────────────────────
-
-    @staticmethod
-    def compute_conviction_score(confidence, regime, side,
-                                  btc_regime=None,
-                                  funding_rate=None,
-                                  sr_position=None,
-                                  vwap_position=None,
-                                  oi_change=None,
-                                  volatility=None,
-                                  sentiment_score=None):
-        """
-        Compute a multi-factor conviction score (0-100) for a trade.
-
-        Factors (positive max pts sum to 100):
-          1. HMM Confidence       (25 pts) — core model signal
-          2. BTC Macro Alignment   (20 pts) — does BTC agree with our trade?
-          3. Funding Rate          (12 pts) — is the opposite side crowded?
-          4. S/R + VWAP Position   (12 pts) — are we entering at a good level?
-          5. OI Momentum            (8 pts) — is smart money building our way?
-          6. Volatility Regime       (5 pts) — is vol tradeable?
-          7. Sentiment Score        (18 pts) — social/news sentiment signal [NEW]
-
-        Parameters
-        ----------
-        sentiment_score : float | None
-            Composite sentiment from SentimentEngine, range -1 to +1.
-            Pass -1.0 if a ALERT (hack/exploit/scam) was detected by the engine.
-
-        Returns
-        -------
-        float : conviction score 0-100
-        """
-        score = 0.0
-
-        # ─── 1. HMM Confidence (25 pts max) ──────────────────────────
-        # 92% → 0pts, 96% → 12pts, 99% → 21pts, 100% → 25pts
-        if confidence >= 0.92:
-            conf_score = min(25, (confidence - 0.92) / 0.08 * 25)
-            score += conf_score
-
-        # ─── 2. BTC Macro Alignment (20 pts max) ─────────────────────
-        if btc_regime is not None:
-            if btc_regime == config.REGIME_CRASH:
-                score -= 15  # Strong penalty — BTC crashing
-            elif side == 'LONG' and btc_regime == config.REGIME_BULL:
-                score += 20  # Perfect alignment
-            elif side == 'SHORT' and btc_regime == config.REGIME_BEAR:
-                score += 20  # Perfect alignment
-            elif side == 'LONG' and btc_regime == config.REGIME_BEAR:
-                score -= 10  # Counter-BTC — dangerous
-            elif side == 'SHORT' and btc_regime == config.REGIME_BULL:
-                score -= 10  # Counter-BTC — dangerous
-            elif btc_regime == config.REGIME_CHOP:
-                score += 5   # Neutral — slight bonus for coin-specific signal
-        else:
-            score += 8  # No BTC data → give partial neutral credit
-
-        # ─── 3. Funding Rate (12 pts max) ────────────────────────────
-        if funding_rate is not None:
-            if side == 'LONG' and funding_rate < -0.0001:
-                score += 12  # Shorts crowded → squeeze potential
-            elif side == 'LONG' and funding_rate > 0.0005:
-                score -= 5   # Longs crowded → risky
-            elif side == 'SHORT' and funding_rate > 0.0003:
-                score += 12  # Longs crowded → dump potential
-            elif side == 'SHORT' and funding_rate < -0.0003:
-                score -= 5   # Shorts crowded → risky
-            else:
-                score += 6   # Neutral funding
-        else:
-            score += 6  # No data → neutral
-
-        # ─── 4. S/R + VWAP Position (12 pts max) ─────────────────────
-        sr_score = 0
-        if sr_position is not None:
-            # sr_position: -1 = at support, +1 = at resistance
-            if side == 'LONG':
-                sr_score += max(0, (1 - sr_position) / 2 * 6)  # Closer to support = more pts
-            else:
-                sr_score += max(0, (1 + sr_position) / 2 * 6)  # Closer to resistance = more pts
-        else:
-            sr_score += 3
-
-        if vwap_position is not None:
-            if side == 'LONG' and vwap_position < 0:
-                sr_score += 6  # Below VWAP — buying cheap
-            elif side == 'SHORT' and vwap_position > 0:
-                sr_score += 6  # Above VWAP — selling expensive
-            else:
-                sr_score += 2  # Neutral
-        else:
-            sr_score += 2
-
-        score += min(12, sr_score)
-
-        # ─── 5. OI Momentum (8 pts max) ──────────────────────────────
-        if oi_change is not None:
-            if side == 'LONG' and oi_change > 0.02:
-                score += 8   # OI building → conviction rising
-            elif side == 'SHORT' and oi_change < -0.02:
-                score += 8   # OI dropping → panic selling
-            elif abs(oi_change) < 0.01:
-                score += 4   # OI stable → neutral
-            else:
-                score += 2   # Slight adverse OI
-        else:
-            score += 4  # No data → neutral
-
-        # ─── 6. Volatility Regime (5 pts max) ────────────────────────
-        if volatility is not None:
-            if 0.005 < volatility < 0.03:
-                score += 5   # Moderate vol → tradeable
-            elif volatility >= 0.03:
-                score += 1   # High vol → risky but opportunity
-            else:
-                score += 3   # Low vol → less opportunity
-        else:
-            score += 3  # No data → neutral
-
-        # ─── 7. Sentiment Score (18 pts max) ─────────────────────────
-        # sentiment_score in [-1, +1]; pass -1.0 when SentimentEngine fires an ALERT.
-        if sentiment_score is not None:
-            if sentiment_score <= -1.0:
-                # ALERT detected (hack/exploit/scam) — hard veto, never trade
-                return 0
-            elif sentiment_score < config.SENTIMENT_VETO_THRESHOLD:
-                # Strong negative sentiment (e.g. regulatory ban news)
-                score -= 15
-            elif sentiment_score < -0.2:
-                # Moderate negative
-                score -= 5
-            elif sentiment_score < 0.2:
-                # Neutral — partial credit
-                score += 5
-            elif sentiment_score < config.SENTIMENT_STRONG_POS:
-                # Moderate positive
-                score += 12
-            else:
-                # Strongly positive — full bonus
-                score += 18
-        else:
-            score += 5  # No sentiment data → neutral partial credit
-
-        return max(0, min(100, score))
-    
-    @staticmethod
-    def get_conviction_leverage(score):
-        """
-        Map conviction score (0-100) to continuous leverage (10x-35x).
-        
-        Score 0-39   → 0  (skip trade — insufficient conviction)
-        Score 40     → 10x  (minimum deployment)
-        Score 55     → 16x
-        Score 70     → 22x
-        Score 85     → 29x
-        Score 100    → 35x  (maximum conviction)
-        """
-        if score < 40:
-            return 0
-        
-        # Continuous: 40→10x, 100→35x
-        leverage = 10 + (score - 40) / 60 * 25
-        return max(10, min(35, round(leverage)))
-
-    # ─── Legacy Dynamic Leverage (kept for backward compatibility) ───────
+    # ─── Dynamic Leverage ────────────────────────────────────────────────────
 
     @staticmethod
     def get_dynamic_leverage(confidence, regime):
@@ -224,14 +59,17 @@ class RiskManager:
             return config.LEVERAGE_LOW if confidence >= config.CONFIDENCE_LOW else 0
 
         # Trend regimes (Bull / Bear) — scale by confidence
+        # > 95% → 35x
         if confidence >= config.CONFIDENCE_HIGH:
             return config.LEVERAGE_HIGH
+        # 91–95% → 25x
         elif confidence >= config.CONFIDENCE_MEDIUM:
             return config.LEVERAGE_MODERATE
+        # 85–90% → 15x
         elif confidence >= config.CONFIDENCE_LOW:
             return config.LEVERAGE_LOW
         else:
-            return 0  # Below threshold — do not deploy
+            return 0  # Below 85% — do not deploy
 
     # ─── Position Sizing (2% Rule) ───────────────────────────────────────────
 
@@ -365,3 +203,213 @@ class RiskManager:
     @property
     def is_killed(self):
         return self._killed
+
+    # ─── Conviction Scoring (8-factor, 0-100) ─────────────────────────────────
+
+    @staticmethod
+    def compute_conviction_score(
+        confidence: float,
+        regime: int,
+        side: str,
+        btc_regime=None,
+        funding_rate=None,
+        sr_position=None,
+        vwap_position=None,
+        oi_change=None,
+        volatility=None,
+        sentiment_score=None,
+        orderflow_score=None,
+    ) -> float:
+        """
+        Compute a 0–100 conviction score from 8 independent factors.
+
+        Factors and max weights
+        ───────────────────────
+        1. HMM Confidence       (22 pts) — core signal quality
+        2. BTC Macro Regime     (18 pts) — macro alignment
+        3. Funding Rate         (12 pts) — perpetual swap carry signal
+        4. S/R + VWAP Position  (10 pts) — price vs key structural levels
+        5. Open Interest Change  (8 pts) — smart-money positioning
+        6. Volatility Quality    (5 pts) — regime quality filter
+        7. Sentiment Score      (15 pts) — social/news signal (alert = hard veto)
+        8. Order Flow           (10 pts) — L2 depth + taker flow + cumDelta
+
+        Total max = 100 pts.
+        Conviction → leverage via get_conviction_leverage().
+        """
+        # ── Hard veto: sentiment ALERT (hack, exploit, rug-pull, etc.) ─────────
+        if sentiment_score is not None and sentiment_score <= -1.0:
+            logger.warning("🚨 Sentiment ALERT veto — conviction forced to 0")
+            return 0.0
+
+        score = 0.0
+
+        # ── 1. HMM Confidence (22 pts) ────────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_HMM
+        if confidence >= 0.97:
+            score += w
+        elif confidence >= 0.94:
+            score += w * 0.85
+        elif confidence >= 0.90:
+            score += w * 0.65
+        elif confidence >= 0.85:
+            score += w * 0.40
+        else:
+            score += 0  # below 85% — no contribution
+
+        # ── 2. BTC Macro Alignment (18 pts) ───────────────────────────────────
+        w = config.CONVICTION_WEIGHT_BTC_MACRO
+        if btc_regime is not None:
+            if btc_regime == config.REGIME_CRASH:
+                score -= 10                       # crash macro → heavy penalty
+            elif (side == "BUY"  and btc_regime == config.REGIME_BULL) or \
+                 (side == "SELL" and btc_regime == config.REGIME_BEAR):
+                score += w                        # aligned with macro
+            elif (side == "BUY"  and btc_regime == config.REGIME_BEAR) or \
+                 (side == "SELL" and btc_regime == config.REGIME_BULL):
+                score -= 8                        # fighting macro
+            else:
+                score += w * 0.35                 # chop / unknown — small boost
+        else:
+            score += w * 0.50                     # no BTC data — neutral half
+
+        # ── 3. Funding Rate (12 pts) ───────────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_FUNDING
+        if funding_rate is not None:
+            if side == "BUY":
+                if funding_rate < -0.0001:        # negative funding → longs paid
+                    score += w
+                elif funding_rate < 0.0003:
+                    score += w * 0.55
+                else:
+                    score -= 4                    # high positive → crowded longs
+            else:  # SELL
+                if funding_rate > 0.0001:         # positive funding → shorts paid
+                    score += w
+                elif funding_rate > -0.0003:
+                    score += w * 0.55
+                else:
+                    score -= 4
+        else:
+            score += w * 0.55                     # no data — mild positive
+
+        # ── 4. S/R + VWAP Position (10 pts) ───────────────────────────────────
+        w = config.CONVICTION_WEIGHT_SR_VWAP
+        if sr_position is not None or vwap_position is not None:
+            sr_pts  = 0.0
+            vwap_pts = 0.0
+            if sr_position is not None:
+                # sr_position: 0=at support (BUY ideal), 1=at resistance (SELL ideal)
+                if side == "BUY":
+                    sr_pts = (1.0 - sr_position) * (w * 0.6)
+                else:
+                    sr_pts = sr_position * (w * 0.6)
+            if vwap_position is not None:
+                # vwap_position: >0 means price above VWAP (bullish), <0 below (bearish)
+                if (side == "BUY"  and vwap_position > 0) or \
+                   (side == "SELL" and vwap_position < 0):
+                    vwap_pts = w * 0.4
+                else:
+                    vwap_pts = 0
+            score += sr_pts + vwap_pts
+        else:
+            score += w * 0.45                     # no data — mild positive
+
+        # ── 5. Open Interest Change (8 pts) ────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_OI
+        if oi_change is not None:
+            if side == "BUY":
+                if oi_change > 0.03:              # OI growing > 3% → strong positioning
+                    score += w
+                elif oi_change > 0.01:
+                    score += w * 0.60
+                elif oi_change < -0.03:           # OI falling → short covering risk
+                    score -= 3
+                else:
+                    score += w * 0.30
+            else:  # SELL
+                if oi_change < -0.03:             # OI falling → shorts winning
+                    score += w
+                elif oi_change < -0.01:
+                    score += w * 0.60
+                elif oi_change > 0.03:
+                    score -= 3
+                else:
+                    score += w * 0.30
+        else:
+            score += w * 0.50
+
+        # ── 6. Volatility Quality (5 pts) ─────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_VOL
+        if volatility is not None:
+            if config.VOL_MIN_ATR_PCT <= volatility <= config.VOL_MAX_ATR_PCT * 0.5:
+                score += w                        # ideal vol range
+            elif volatility <= config.VOL_MAX_ATR_PCT:
+                score += w * 0.60
+            else:
+                score += w * 0.10                 # too volatile
+        else:
+            score += w * 0.60
+
+        # ── 7. Sentiment Score (15 pts) ────────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_SENTIMENT
+        if sentiment_score is not None:
+            if sentiment_score < config.SENTIMENT_VETO_THRESHOLD:
+                score -= 12                       # strong negative news
+            elif sentiment_score < -0.20:
+                score -= 4
+            elif sentiment_score < 0.20:
+                score += w * 0.30                 # neutral
+            elif sentiment_score < config.SENTIMENT_STRONG_POS:
+                score += w * 0.75                 # moderately positive
+            else:
+                score += w                        # strongly positive
+        else:
+            score += w * 0.30                     # no sentiment data — mild
+
+        # ── 8. Order Flow (10 pts) ─────────────────────────────────────────────
+        w = config.CONVICTION_WEIGHT_ORDERFLOW
+        if orderflow_score is not None:
+            # orderflow_score is -1..+1; map so that trade-aligned flow adds max pts
+            if side == "BUY":
+                aligned = orderflow_score          # positive = buy pressure = aligned
+            else:
+                aligned = 0.0 - orderflow_score   # negative = sell pressure = aligned
+
+            if aligned > 0.5:
+                score += w                        # strong flow confirmation
+            elif aligned > 0.2:
+                score += w * 0.70
+            elif aligned > -0.2:
+                score += w * 0.30                 # neutral flow
+            elif aligned > -0.5:
+                score -= 3                        # mild opposing flow
+            else:
+                score -= 7                        # strong opposing flow
+
+        # ── Cap and floor ──────────────────────────────────────────────────────
+        return float(max(0.0, min(100.0, score)))
+
+    @staticmethod
+    def get_conviction_leverage(conviction_score: float) -> int:
+        """
+        Map conviction score (0–100) to leverage.
+
+        Bands
+        ─────
+        < 40      → 0  (no trade)
+        40–54     → 10x
+        55–69     → 15x
+        70–84     → 25x
+        85–100    → 35x
+        """
+        if conviction_score < 40:
+            return 0
+        elif conviction_score < 55:
+            return 10
+        elif conviction_score < 70:
+            return 15
+        elif conviction_score < 85:
+            return 25
+        else:
+            return 35

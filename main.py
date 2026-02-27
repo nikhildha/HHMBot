@@ -8,7 +8,6 @@ import os
 import time
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, cast
 
 import config
 from hmm_brain import HMMBrain
@@ -20,7 +19,8 @@ from sideways_strategy import evaluate_mean_reversion
 from coin_scanner import get_top_coins_by_volume
 import tradebook
 import telegram as tg
-import sentiment_engine
+import sentiment_engine as _sent_mod
+import orderflow_engine as _of_mod
 
 # ─── Logging Setup ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -59,10 +59,10 @@ class RegimeMasterBot:
         self._last_analysis_time = 0.0  # epoch — triggers immediate first run
 
         # Multi-coin state
-        self._coin_list: list[str] = []
-        self._active_positions: dict[str, dict[str, Any]] = {}  # symbol → {regime, confidence, side, entry_time}
-        self._coin_brains: dict[str, HMMBrain] = {}              # symbol → HMMBrain (cached per coin)
-        self._coin_states: dict[str, dict[str, Any]] = {}        # symbol → latest state dict (for dashboard)
+        self._coin_list = []
+        self._active_positions = {}  # symbol → {regime, confidence, side, entry_time}
+        self._coin_brains = {}       # symbol → HMMBrain (cached per coin)
+        self._coin_states = {}       # symbol → latest state dict (for dashboard)
 
         # ── Startup: sync _active_positions from tradebook ──────────
         self._load_positions_from_tradebook()
@@ -71,11 +71,20 @@ class RegimeMasterBot:
         self._sentiment = None
         if config.SENTIMENT_ENABLED:
             try:
-                self._sentiment = sentiment_engine.get_engine()
-                logger.info("📰 Sentiment Engine loaded (VADER%s)",
+                self._sentiment = _sent_mod.get_engine()
+                logger.info("📰 Sentiment Engine ready (VADER%s)",
                             " + FinBERT" if config.SENTIMENT_USE_FINBERT else " only")
             except Exception as e:
-                logger.warning("⚠️ Sentiment Engine failed to load: %s", e)
+                logger.warning("⚠️  Sentiment Engine failed to load: %s", e)
+
+        # ── Order Flow Engine (lazy singleton) ────────────────────────
+        self._orderflow = None
+        if config.ORDERFLOW_ENABLED:
+            try:
+                self._orderflow = _of_mod.get_engine()
+                logger.info("📊 Order Flow Engine ready (L2 depth + taker flow + cumDelta)")
+            except Exception as e:
+                logger.warning("⚠️  Order Flow Engine failed to load: %s", e)
 
     # ─── Main Loop ───────────────────────────────────────────────────────────
 
@@ -92,39 +101,17 @@ class RegimeMasterBot:
             config.LOOP_INTERVAL_SECONDS, config.ANALYSIS_INTERVAL_SECONDS,
         )
 
-        consecutive_errors = 0
         while True:
             try:
                 self._heartbeat()
-                consecutive_errors = 0  # Reset on success
                 time.sleep(config.LOOP_INTERVAL_SECONDS)
 
             except KeyboardInterrupt:
                 logger.info("⏹ Bot stopped by user.")
                 break
             except Exception as e:
-                consecutive_errors += 1
-                logger.error("⚠️ Loop error (#%d): %s", consecutive_errors, e, exc_info=True)
-                # Save crash info for dashboard visibility
-                try:
-                    import traceback as _tb
-                    crash_info = {
-                        "engine_status": "ERROR",
-                        "last_error": f"Loop error #{consecutive_errors}: {str(e)[:500]}",
-                        "last_error_time": datetime.utcnow().isoformat() + "Z",
-                        "last_error_traceback": _tb.format_exc()[-1000:],
-                    }
-                    if os.path.exists(config.MULTI_STATE_FILE):
-                        with open(config.MULTI_STATE_FILE, "r") as f:
-                            state = json.load(f)
-                        state.update(crash_info)
-                        with open(config.MULTI_STATE_FILE, "w") as f:
-                            json.dump(state, f, indent=2)
-                except Exception:
-                    pass
-                backoff = min(config.ERROR_RETRY_SECONDS * consecutive_errors, 300)
-                logger.info("⏳ Retrying in %ds...", backoff)
-                time.sleep(backoff)
+                logger.error("⚠️ Loop error: %s", e, exc_info=True)
+                time.sleep(config.ERROR_RETRY_SECONDS)
 
     def _heartbeat(self):
         """1-minute heartbeat: lightweight checks + trigger full analysis on schedule."""
@@ -208,23 +195,7 @@ class RegimeMasterBot:
         elapsed = now - self._last_analysis_time
         if force or elapsed >= config.ANALYSIS_INTERVAL_SECONDS:
             logger.info("🧠 Running full analysis cycle (%.0fs since last)...", elapsed)
-            try:
-                self._tick()
-            except Exception as e:
-                logger.error("💥 TICK CRASH (engine survived): %s", e, exc_info=True)
-                # Save error to dashboard state so user can see what happened
-                try:
-                    import traceback as _tb
-                    if os.path.exists(config.MULTI_STATE_FILE):
-                        with open(config.MULTI_STATE_FILE, "r") as f:
-                            state = json.load(f)
-                        state["last_error"] = f"Tick crash: {str(e)[:500]}"
-                        state["last_error_time"] = datetime.utcnow().isoformat() + "Z"
-                        state["last_error_traceback"] = _tb.format_exc()[-1000:]
-                        with open(config.MULTI_STATE_FILE, "w") as f:
-                            json.dump(state, f, indent=2)
-                except Exception:
-                    pass
+            self._tick()
             self._last_analysis_time = time.time()
             self._save_timing()  # Update timing for dashboard
         else:
@@ -234,10 +205,10 @@ class RegimeMasterBot:
     def _save_timing(self):
         """Persist last/next analysis timestamps for the dashboard."""
         try:
-            multi: Dict[str, Any] = {}
+            multi = {}
             if os.path.exists(config.MULTI_STATE_FILE):
                 with open(config.MULTI_STATE_FILE, "r") as f:
-                    multi = cast(Dict[str, Any], json.load(f))
+                    multi = json.load(f)
             multi["last_analysis_time"] = datetime.utcnow().isoformat() + "Z"
             nxt = self._last_analysis_time + config.ANALYSIS_INTERVAL_SECONDS
             multi["next_analysis_time"] = datetime.utcfromtimestamp(nxt).isoformat() + "Z"
@@ -298,12 +269,7 @@ class RegimeMasterBot:
                 if result:
                     eligible_trades.append(result)
             except Exception as e:
-                logger.warning("⚠️ Error analyzing %s: %s", symbol, e, exc_info=True)
-                self._coin_states[symbol] = {
-                    "symbol": symbol, "regime": "ERROR", "confidence": 0,
-                    "price": 0, "action": f"ERROR: {str(e)[:80]}",
-                    "macro_regime": None, "features": {},
-                }
+                logger.debug("Error analyzing %s: %s", symbol, e)
                 continue
 
         # ── 5. Deploy eligible trades (respect position limit) ───
@@ -314,7 +280,7 @@ class RegimeMasterBot:
                 "📊 Position limit reached (%d/%d). No new deployments this cycle.",
                 tradebook_active_count, config.MAX_CONCURRENT_POSITIONS,
             )
-            # AUTO-HALT: 15 positions reached → pause engine for 1 hour
+            # AUTO-HALT: 25 positions reached → pause engine for 1 hour
             if tradebook_active_count >= config.MAX_CONCURRENT_POSITIONS:
                 try:
                     import json
@@ -324,9 +290,9 @@ class RegimeMasterBot:
                     halt_state = {
                         "status": "paused",
                         "paused_at": datetime.utcnow().isoformat() + "Z",
-                        "paused_by": "auto_15_cap",
+                        "paused_by": "auto_25_cap",
                         "halt_until": halt_until,
-                        "reason": f"15 active positions reached — auto-halted for 1 hour until {halt_until}",
+                        "reason": f"25 active positions reached — auto-halted for 1 hour until {halt_until}",
                     }
                     with open(state_path, "w") as f:
                         json.dump(halt_state, f, indent=2)
@@ -492,13 +458,9 @@ class RegimeMasterBot:
         df_1h_feat = compute_all_features(df_1h)
         df_1h_hmm = compute_hmm_features(df_1h)
 
-        # Train if needed (wrapped — hmmlearn can segfault on bad data)
+        # Train if needed
         if brain.needs_retrain():
-            try:
-                brain.train(df_1h_hmm)
-            except Exception as e:
-                logger.warning("⚠️ HMM train failed for %s: %s", symbol, e)
-                return None
+            brain.train(df_1h_hmm)
 
         if not brain.is_trained:
             return None
@@ -528,36 +490,21 @@ class RegimeMasterBot:
         except Exception as e:
             logger.debug("4h macro analysis failed for %s: %s", symbol, e)
 
-        # Update coin state for dashboard (include feature snapshot for heatmap)
+        # Update coin state for dashboard
         current_price = float(df_1h_feat["close"].iloc[-1])
 
-        # Extract latest HMM feature values for dashboard heatmap
-        feature_snapshot = {}
-        for feat_col in ["log_return", "volatility", "volume_change", "rsi_norm",
-                         "vwap_position", "sr_position", "oi_change", "funding_norm"]:
-            if feat_col in df_1h_hmm.columns:
-                val = df_1h_hmm[feat_col].iloc[-1]
-                feature_snapshot[feat_col] = round(float(val), 4) if not (val != val) else 0.0
-            else:
-                feature_snapshot[feat_col] = 0.0
-
-        # ── Sentiment signal ──────────────────────────────────────
-        sentiment_score = None
-        sentiment_data = {}
-        if self._sentiment:
-            try:
-                sig = self._sentiment.get_coin_sentiment(symbol)
-                sentiment_score = sig.effective_score
-                sentiment_data = {
-                    "sentiment_score": round(sig.score, 4),
-                    "sentiment_conf": round(sig.confidence, 2),
-                    "sentiment_buzz": sig.buzz_velocity,
-                    "sentiment_alert": sig.alert,
-                    "sentiment_alert_reason": sig.alert_reason,
-                    "fear_greed": sig.fear_greed,
-                }
-            except Exception as e:
-                logger.debug("Sentiment fetch failed for %s: %s", symbol, e)
+        # Extract latest HMM feature values for the feature heatmap
+        _features = {}
+        try:
+            last = df_1h_feat.iloc[-1]
+            _features = {
+                "log_return":    round(float(last.get("log_return", 0)), 6),
+                "volatility":    round(float(last.get("volatility", 0)), 6),
+                "volume_change": round(float(last.get("volume_change", 0)), 6),
+                "rsi_norm":      round(float(last.get("rsi_norm", 0)), 6),
+            }
+        except Exception:
+            pass
 
         self._coin_states[symbol] = {
             "symbol": symbol,
@@ -566,8 +513,7 @@ class RegimeMasterBot:
             "price": current_price,
             "action": "ANALYZING",
             "macro_regime": macro_regime_name,
-            "features": feature_snapshot,
-            **sentiment_data,
+            "features": _features,
         }
 
         # ── CRASH on either timeframe → skip ──
@@ -614,7 +560,9 @@ class RegimeMasterBot:
             self._coin_states[symbol]["action"] = "CHOP_NO_SIGNAL"
             return None
 
-        # ── TREND (BULL / BEAR) — step 1: determine trade side ──────
+        # ── TREND (BULL / BEAR) — 8-factor conviction flow ──────────────────────
+
+        # 1. Determine side first (needed for sentiment gate + conviction)
         if regime == config.REGIME_BULL:
             side = "BUY"
         elif regime == config.REGIME_BEAR:
@@ -622,39 +570,10 @@ class RegimeMasterBot:
         else:
             return None
 
-        # ── step 2: fast sentiment gate (skip expensive scoring if vetoed) ──
-        if sentiment_score is not None and sentiment_score <= config.SENTIMENT_VETO_THRESHOLD:
-            self._coin_states[symbol]["action"] = (
-                f"ALERT_VETO: {sentiment_data.get('sentiment_alert_reason', '')[:40]}"
-                if sentiment_data.get("sentiment_alert")
-                else f"SENTIMENT_VETO ({sentiment_score:+.2f})"
-            )
-            return None
+        current_atr   = df_1h_feat["atr"].iloc[-1]   if "atr"   in df_1h_feat.columns else 0.0
+        current_price = float(df_1h_feat["close"].iloc[-1])
 
-        # ── step 3: full conviction score (7 factors incl. sentiment) ─
-        _name_to_int = {v: k for k, v in config.REGIME_NAMES.items()}
-        btc_proxy = _name_to_int.get(macro_regime_name) if macro_regime_name else None
-        funding = (df_1h_feat["funding_rate"].iloc[-1]
-                   if "funding_rate" in df_1h_feat.columns else None)
-
-        conviction = self.risk.compute_conviction_score(
-            conf, regime, side,
-            btc_regime=btc_proxy,
-            funding_rate=funding,
-            sr_position=feature_snapshot.get("sr_position"),
-            vwap_position=feature_snapshot.get("vwap_position"),
-            oi_change=feature_snapshot.get("oi_change"),
-            volatility=feature_snapshot.get("volatility"),
-            sentiment_score=sentiment_score,
-        )
-        leverage = self.risk.get_conviction_leverage(conviction)
-        if leverage == 0:
-            self._coin_states[symbol]["action"] = "LOW_CONVICTION"
-            return None
-        self._coin_states[symbol]["conviction"] = round(conviction, 1)
-
-        # ── step 4: volatility band filter ───────────────────────────
-        current_atr = df_1h_feat["atr"].iloc[-1] if "atr" in df_1h_feat.columns else 0
+        # 2. Volatility filter
         if config.VOL_FILTER_ENABLED and current_atr > 0:
             vol_ratio = current_atr / current_price
             if vol_ratio < config.VOL_MIN_ATR_PCT:
@@ -664,43 +583,102 @@ class RegimeMasterBot:
                 self._coin_states[symbol]["action"] = "VOL_TOO_HIGH"
                 return None
 
-        # ── step 5: 15m momentum confirmation ────────────────────────
+        # 3. Sentiment (fast veto before conviction compute)
+        sentiment_score = None
+        coin_sym = symbol.replace("USDT", "").replace("BUSD", "")
+        if self._sentiment:
+            try:
+                s_sig = self._sentiment.get_signal(coin_sym)
+                if s_sig is not None:
+                    if s_sig.alert:
+                        self._coin_states[symbol]["action"] = f"SENTIMENT_ALERT:{s_sig.alert_reason}"
+                        return None
+                    sentiment_score = s_sig.effective_score
+                    if sentiment_score <= config.SENTIMENT_VETO_THRESHOLD:
+                        self._coin_states[symbol]["action"] = "SENTIMENT_VETO"
+                        return None
+            except Exception as _se:
+                logger.debug("Sentiment fetch failed for %s: %s", symbol, _se)
+
+        # 4. 15m momentum filter + order flow (fetch df_15m once for both)
+        df_15m = None
+        orderflow_score = None
         try:
             df_15m = fetch_klines(symbol, config.TIMEFRAME_EXECUTION, limit=50)
             if df_15m is not None and len(df_15m) >= 5:
                 df_15m_feat = compute_all_features(df_15m)
-                price_now = df_15m_feat["close"].iloc[-1]
-                price_5_ago = df_15m_feat["close"].iloc[-5]
-                if side == "BUY" and price_now <= price_5_ago:
+                price_now   = float(df_15m_feat["close"].iloc[-1])
+                price_5_ago = float(df_15m_feat["close"].iloc[-5])
+                if side == "BUY"  and price_now <= price_5_ago:
                     self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
                     return None
                 if side == "SELL" and price_now >= price_5_ago:
                     self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
                     return None
         except Exception:
-            pass  # If 15m data fails, proceed without filter
+            pass
 
-        # ── step 6: position sizing ───────────────────────────────────
-        coin_budget = balance * config.CAPITAL_PER_COIN_PCT
-        quantity = self.risk.calculate_position_size(
-            coin_budget, current_price, current_atr, leverage,
+        if self._orderflow:
+            try:
+                of_sig = self._orderflow.get_signal(symbol, df_15m)
+                if of_sig is not None:
+                    orderflow_score = of_sig.score
+                    if of_sig.bid_walls or of_sig.ask_walls:
+                        logger.info("🧱 %s order walls: %s", symbol, of_sig.note)
+            except Exception as _oe:
+                logger.debug("OrderFlow fetch failed for %s: %s", symbol, _oe)
+
+        # 5. Full 8-factor conviction score
+        _regime_name_to_int = {v: k for k, v in config.REGIME_NAMES.items()}
+        btc_proxy   = _regime_name_to_int.get(macro_regime_name) if macro_regime_name else None
+        funding     = df_1h_feat["funding_rate"].iloc[-1] if "funding_rate" in df_1h_feat.columns else None
+        sr_pos      = df_1h_feat["sr_position"].iloc[-1]  if "sr_position"  in df_1h_feat.columns else None
+        vwap_pos    = df_1h_feat["vwap_position"].iloc[-1] if "vwap_position" in df_1h_feat.columns else None
+        oi_chg      = df_1h_feat["oi_change"].iloc[-1]    if "oi_change"    in df_1h_feat.columns else None
+        volatility  = (current_atr / current_price)       if current_atr > 0 else None
+
+        conviction = self.risk.compute_conviction_score(
+            confidence=conf,
+            regime=regime,
+            side=side,
+            btc_regime=btc_proxy,
+            funding_rate=funding,
+            sr_position=sr_pos,
+            vwap_position=vwap_pos,
+            oi_change=oi_chg,
+            volatility=volatility,
+            sentiment_score=sentiment_score,
+            orderflow_score=orderflow_score,
         )
-        quantity = round(quantity, 6)
+        leverage = self.risk.get_conviction_leverage(conviction)
+        if leverage == 0:
+            self._coin_states[symbol]["action"] = f"LOW_CONVICTION:{conviction:.1f}"
+            return None
 
-        sent_tag = f" | sent={sentiment_score:+.2f}" if sentiment_score is not None else ""
+        # 6. Position sizing (per-coin budget)
+        coin_budget = balance * config.CAPITAL_PER_COIN_PCT
+        quantity    = self.risk.calculate_position_size(coin_budget, current_price, current_atr, leverage)
+        quantity    = round(quantity, 6)
+
+        of_note = f" | OF={orderflow_score:+.2f}" if orderflow_score is not None else ""
+        sn_note = f" | sent={sentiment_score:+.2f}" if sentiment_score is not None else ""
         self._coin_states[symbol]["action"] = f"ELIGIBLE_{side}"
+        self._coin_states[symbol].update({
+            "conviction": round(conviction, 1),
+            "orderflow":  round(orderflow_score, 3) if orderflow_score is not None else None,
+            "sentiment":  round(sentiment_score, 3) if sentiment_score is not None else None,
+        })
         return {
-            "symbol":      symbol,
-            "side":        side,
-            "leverage":    leverage,
-            "quantity":    quantity,
-            "atr":         current_atr,
-            "regime":      regime,
+            "symbol": symbol,
+            "side": side,
+            "leverage": leverage,
+            "quantity": quantity,
+            "atr": current_atr,
+            "regime": regime,
             "regime_name": regime_name,
-            "confidence":  conf,
-            "conviction":  round(conviction, 1),
-            "reason": (f"Trend {regime_name} | conf={conf:.0%} | "
-                       f"conviction={conviction:.0f} | lev={leverage}x{sent_tag}"),
+            "confidence": conf,
+            "conviction": conviction,
+            "reason": f"Trend {regime_name} | conf={conf:.0%} | conv={conviction:.1f} | lev={leverage}x{sn_note}{of_note}",
         }
 
     # ─── Exit & Sync Logic ────────────────────────────────────────────────────

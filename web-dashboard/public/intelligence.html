@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SENTINEL — Market Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Intelligence Page Styles ─────────────────────────────── */
+    .intel-hero {
+      padding: 28px 32px 0;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .intel-hero h1 {
+      font-size: 26px; font-weight: 800; color: var(--text-primary);
+      letter-spacing: -0.5px;
+    }
+    .intel-hero .hero-sub {
+      font-size: 13px; color: var(--text-secondary); margin-top: 2px;
+    }
+    .intel-badge {
+      background: linear-gradient(135deg, #8B5CF6, #3B82F6);
+      color: #fff; font-size: 10px; font-weight: 700;
+      padding: 3px 9px; border-radius: 20px; letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .refresh-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 32px 20px;
+    }
+    .refresh-ts { font-size: 12px; color: var(--text-secondary); }
+    .btn-refresh {
+      background: var(--accent-blue); color: #fff; border: none;
+      padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; gap: 6px;
+    }
+    .btn-refresh:hover { opacity: 0.85; }
+    .spinning { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Section Labels ──────────────────────────────────────── */
+    .intel-section {
+      padding: 0 32px 32px;
+    }
+    .section-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 18px; padding-bottom: 12px;
+      border-bottom: 2px solid #F0F4F8;
+    }
+    .section-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .section-icon.sent  { background: linear-gradient(135deg, #F59E0B22, #EF444422); }
+    .section-icon.flow  { background: linear-gradient(135deg, #3B82F622, #8B5CF622); }
+    .section-title { font-size: 18px; font-weight: 800; color: var(--text-primary); }
+    .section-sub   { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* ── Cards grid ──────────────────────────────────────────── */
+    .intel-grid { display: grid; gap: 16px; }
+    .intel-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+    .intel-grid-2 { grid-template-columns: 1.4fr 1fr; }
+    .intel-grid-wide { grid-template-columns: 1fr; }
+    .icard {
+      background: var(--bg-secondary); border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card); padding: 20px; position: relative; overflow: hidden;
+    }
+    .icard-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--text-secondary); margin-bottom: 14px;
+    }
+
+    /* ── Fear & Greed ────────────────────────────────────────── */
+    .fg-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .fg-arc {
+      position: relative; width: 160px; height: 80px; overflow: hidden;
+    }
+    .fg-arc svg { position: absolute; top: 0; left: 0; }
+    .fg-needle {
+      position: absolute; bottom: 0; left: 50%;
+      width: 3px; height: 70px; transform-origin: bottom center;
+      transform: translateX(-50%) rotate(-90deg);
+      background: linear-gradient(to top, #1A2332, #3B82F6);
+      border-radius: 2px; transition: transform 1s cubic-bezier(.34,1.56,.64,1);
+    }
+    .fg-value { font-size: 32px; font-weight: 800; color: var(--text-primary); }
+    .fg-label { font-size: 13px; font-weight: 600; padding: 3px 12px; border-radius: 20px; }
+    .fg-extreme-fear  { background: #FEE2E2; color: #DC2626; }
+    .fg-fear          { background: #FEF3C7; color: #D97706; }
+    .fg-neutral       { background: #F0FDF4; color: #16A34A; }
+    .fg-greed         { background: #DCFCE7; color: #16A34A; }
+    .fg-extreme-greed { background: #BBF7D0; color: #15803D; }
+
+    /* ── Market Bias ─────────────────────────────────────────── */
+    .bias-meter {
+      height: 8px; border-radius: 4px; overflow: hidden;
+      background: #F0F4F8; margin: 10px 0;
+    }
+    .bias-fill {
+      height: 100%; border-radius: 4px;
+      transition: width 0.8s ease, background 0.8s ease;
+    }
+    .bias-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-secondary); }
+    .bias-val {
+      font-size: 28px; font-weight: 800; text-align: center;
+      margin: 6px 0;
+    }
+
+    /* ── Coin Sentiment Bars ─────────────────────────────────── */
+    .sent-bar-wrap { max-height: 280px; overflow-y: auto; }
+    .sent-bar-row {
+      display: flex; align-items: center; gap: 10px; padding: 6px 0;
+      border-bottom: 1px solid #F8FAFC;
+    }
+    .sent-coin { font-size: 12px; font-weight: 700; color: var(--text-primary); width: 44px; flex-shrink: 0; }
+    .sent-bar-bg {
+      flex: 1; height: 20px; border-radius: 4px; background: #F0F4F8;
+      position: relative; overflow: hidden;
+    }
+    .sent-bar-fill {
+      height: 100%; border-radius: 4px; position: absolute;
+      top: 0; transition: width 0.6s ease, background 0.6s ease;
+    }
+    .sent-score {
+      font-size: 12px; font-weight: 700; width: 50px; text-align: right; flex-shrink: 0;
+    }
+    .sent-action {
+      font-size: 10px; width: 80px; text-align: right; color: var(--text-secondary); flex-shrink: 0;
+    }
+
+    /* ── Alert Banner ────────────────────────────────────────── */
+    .alert-banner {
+      background: linear-gradient(135deg, #FEF2F2, #FEE2E2);
+      border: 1px solid #FECACA; border-radius: var(--radius-sm);
+      padding: 12px 16px; display: flex; align-items: center; gap: 10px;
+      margin-top: 12px;
+    }
+    .alert-banner.hidden { display: none; }
+    .alert-icon { font-size: 20px; }
+    .alert-text { font-size: 13px; font-weight: 600; color: #DC2626; }
+
+    /* ── Coin Selector Tabs ──────────────────────────────────── */
+    .coin-tabs {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .coin-tab {
+      padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      cursor: pointer; border: 1.5px solid #E2E8F0; background: #fff;
+      color: var(--text-secondary); transition: all 0.15s;
+    }
+    .coin-tab.active {
+      background: var(--accent-blue); color: #fff; border-color: var(--accent-blue);
+    }
+    .coin-tab:hover:not(.active) { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+    /* ── Order Book Depth ────────────────────────────────────── */
+    .depth-legend {
+      display: flex; gap: 20px; justify-content: center;
+      font-size: 12px; margin-bottom: 8px;
+    }
+    .depth-legend span { display: flex; align-items: center; gap: 6px; }
+    .leg-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    /* ── Flow Metric Tiles ───────────────────────────────────── */
+    .flow-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .flow-tile {
+      background: #F8FAFC; border-radius: var(--radius-sm);
+      padding: 14px; text-align: center;
+    }
+    .flow-tile-label { font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 6px; }
+    .flow-tile-val   { font-size: 22px; font-weight: 800; }
+    .flow-tile-sub   { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+    .positive { color: #22C55E; }
+    .negative { color: #EF4444; }
+    .neutral  { color: #F59E0B; }
+
+    /* ── Walls Table ─────────────────────────────────────────── */
+    .walls-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .walls-table th {
+      text-align: left; font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.5px; color: var(--text-secondary); font-weight: 700;
+      padding: 0 10px 8px; border-bottom: 1px solid #E2E8F0;
+    }
+    .walls-table td {
+      padding: 10px; border-bottom: 1px solid #F8FAFC; font-weight: 500;
+    }
+    .wall-bid { color: #22C55E; font-weight: 700; }
+    .wall-ask { color: #EF4444; font-weight: 700; }
+    .wall-mult { font-size: 11px; background: #F0F4F8; padding: 2px 6px; border-radius: 4px; }
+    .no-walls { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
+
+    /* ── Flow Heatmap ────────────────────────────────────────── */
+    .flow-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 8px;
+    }
+    .flow-tile-coin {
+      border-radius: var(--radius-sm); padding: 12px 8px; text-align: center;
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      transition: transform 0.15s;
+    }
+    .flow-tile-coin:hover { transform: scale(1.05); }
+    .flow-tile-coin .ftc-sym { font-size: 13px; font-weight: 800; }
+    .flow-tile-coin .ftc-val { font-size: 11px; margin-top: 3px; opacity: 0.85; }
+    .fc-strong-buy  { background: #DCFCE7; color: #15803D; }
+    .fc-buy         { background: #F0FDF4; color: #16A34A; }
+    .fc-neutral     { background: #F8FAFC; color: #5A6A7E; }
+    .fc-sell        { background: #FFF7ED; color: #C2410C; }
+    .fc-strong-sell { background: #FEF2F2; color: #DC2626; }
+
+    /* ── Source Pills ────────────────────────────────────────── */
+    .source-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .src-pill {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
+      background: #F0F4F8; color: var(--text-secondary);
+    }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .intel-grid-3 { grid-template-columns: 1fr 1fr; }
+      .intel-grid-2 { grid-template-columns: 1fr; }
+      .flow-metrics { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .intel-grid-3, .intel-grid-2 { grid-template-columns: 1fr; }
+      .intel-section { padding: 0 16px 24px; }
+      .intel-hero { padding: 16px 16px 0; }
+      .refresh-row { padding: 8px 16px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ Ticker Tape ═══ -->
+  <div class="ticker-tape">
+    <div class="ticker-track" id="tickerTrack"></div>
+  </div>
+
+  <!-- ═══ Header ═══ -->
+  <header class="header">
+    <div class="logo">
+      <div>
+        <div class="logo-text">SENTINEL</div>
+        <div class="logo-subtitle">AI Trading Command Center</div>
+      </div>
+    </div>
+    <nav class="header-nav">
+      <a href="/" class="nav-link">Dashboard</a>
+      <a href="/tradebook" class="nav-link">Tradebook</a>
+      <a href="/charts" class="nav-link">Charts</a>
+      <a href="/backtest" class="nav-link">Backtest</a>
+      <a href="/deploy" class="nav-link">Deploy</a>
+      <a href="/intelligence" class="nav-link active">Intelligence</a>
+      <a href="/settings" class="nav-link">Settings</a>
+    </nav>
+    <div class="header-right">
+      <span class="timestamp" id="lastUpdate">Loading...</span>
+      <div class="status-pill" id="statusPill">
+        <span class="dot"></span>
+        <span id="statusText">OFFLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ Page Hero ═══ -->
+  <div class="intel-hero">
+    <div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <h1>Market Intelligence</h1>
+        <span class="intel-badge">LIVE</span>
+      </div>
+      <div class="hero-sub">Real-time sentiment surveillance + order flow microstructure analysis across all tracked coins</div>
+    </div>
+  </div>
+
+  <div class="refresh-row">
+    <button class="btn-refresh" id="btnRefresh" onclick="refreshAll()">
+      <span id="refreshIcon">↻</span> Refresh Now
+    </button>
+    <span class="refresh-ts" id="refreshTs">Auto-refresh every 30s</span>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!--  SECTION 1: SENTIMENT INTELLIGENCE                          -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="intel-section">
+    <div class="section-header">
+      <div class="section-icon sent">📰</div>
+      <div>
+        <div class="section-title">Sentiment Intelligence</div>
+        <div class="section-sub">VADER NLP · RSS · Reddit · CryptoPanic · Fear &amp; Greed</div>
+      </div>
+    </div>
+
+    <!-- Row 1: Fear & Greed + Market Bias + Alert -->
+    <div class="intel-grid intel-grid-3" style="margin-bottom:16px;">
+
+      <!-- Fear & Greed Gauge -->
+      <div class="icard">
+        <div class="icard-title">Market Fear &amp; Greed</div>
+        <div class="fg-wrap">
+          <div class="fg-arc">
+            <svg viewBox="0 0 160 80" width="160" height="80">
+              <!-- Colored arc segments -->
+              <path d="M 10 80 A 70 70 0 0 1 46 17" stroke="#DC2626" stroke-width="10" fill="none" stroke-linecap="round"/>
+              <path d="M 46 17 A 70 70 0 0 1 80 10" stroke="#F59E0B" stroke-width="10" fill="none" stroke-linecap="round"/>
+              <path d="M 80 10 A 70 70 0 0 1 114 17" stroke="#84CC16" stroke-width="10" fill="none" stroke-linecap="round"/>
+              <path d="M 114 17 A 70 70 0 0 1 150 80" stroke="#22C55E" stroke-width="10" fill="none" stroke-linecap="round"/>
+              <!-- Labels -->
+              <text x="12" y="72" font-size="8" fill="#DC2626" font-weight="700">Fear</text>
+              <text x="128" y="72" font-size="8" fill="#22C55E" font-weight="700">Greed</text>
+            </svg>
+            <div class="fg-needle" id="fgNeedle"></div>
+          </div>
+          <div class="fg-value" id="fgValue">—</div>
+          <div class="fg-label" id="fgLabel">Loading...</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;" id="fgSub"></div>
+        </div>
+      </div>
+
+      <!-- Market Bias -->
+      <div class="icard">
+        <div class="icard-title">Market Sentiment Bias</div>
+        <div class="bias-val" id="biasVal">—</div>
+        <div class="bias-labels"><span>Bearish -1</span><span>0</span><span>Bullish +1</span></div>
+        <div class="bias-meter">
+          <div class="bias-fill" id="biasFill" style="width:50%;background:#E2E8F0;"></div>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="icard-title" style="margin-bottom:8px;">Conviction Distribution</div>
+          <canvas id="convictionDist" height="60"></canvas>
+        </div>
+      </div>
+
+      <!-- Source breakdown -->
+      <div class="icard">
+        <div class="icard-title">Signal Sources</div>
+        <canvas id="sourceChart" height="130"></canvas>
+        <div class="source-pills" id="sourcePills" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <!-- Alert Banner -->
+    <div class="alert-banner hidden" id="alertBanner">
+      <span class="alert-icon">🚨</span>
+      <div>
+        <div class="alert-text" id="alertText">SENTIMENT ALERT DETECTED</div>
+        <div style="font-size:11px;color:#991B1B;margin-top:2px;" id="alertDetail"></div>
+      </div>
+    </div>
+
+    <!-- Row 2: Per-coin bars + Timeline -->
+    <div class="intel-grid intel-grid-2" style="margin-top:16px;">
+
+      <!-- Per-coin sentiment bars -->
+      <div class="icard">
+        <div class="icard-title">Per-Coin Sentiment Scores</div>
+        <div class="sent-bar-wrap" id="sentBars">
+          <div style="color:var(--text-secondary);font-size:13px;padding:20px 0;text-align:center;">
+            Waiting for bot analysis cycle…
+          </div>
+        </div>
+      </div>
+
+      <!-- Sentiment timeline -->
+      <div class="icard">
+        <div class="icard-title">Sentiment Timeline (Last 24h)</div>
+        <canvas id="sentTimeline" height="180"></canvas>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:8px;text-align:center;" id="timelineNote">
+          Accumulates from <code>sentiment_log.csv</code> as the bot runs
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!--  SECTION 2: ORDER FLOW INTELLIGENCE                         -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="intel-section">
+    <div class="section-header">
+      <div class="section-icon flow">📊</div>
+      <div>
+        <div class="section-title">Order Flow Intelligence</div>
+        <div class="section-sub">L2 Order Book · Taker Buy/Sell · Cumulative Delta · Long/Short Ratio · Binance Public API</div>
+      </div>
+    </div>
+
+    <!-- Coin selector -->
+    <div class="coin-tabs" id="coinTabs"></div>
+
+    <!-- Main row: depth chart + metrics -->
+    <div class="intel-grid intel-grid-2" style="margin-bottom:16px;">
+
+      <!-- Order book depth -->
+      <div class="icard">
+        <div class="icard-title">Live Order Book Depth — <span id="depthCoinLabel">BTCUSDT</span></div>
+        <div class="depth-legend">
+          <span><span class="leg-dot" style="background:#22C55E;"></span>Bids (Buy orders)</span>
+          <span><span class="leg-dot" style="background:#EF4444;"></span>Asks (Sell orders)</span>
+        </div>
+        <canvas id="depthChart" height="220"></canvas>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;" id="depthMidLabel"></div>
+      </div>
+
+      <!-- Flow metrics -->
+      <div class="icard">
+        <div class="icard-title">Microstructure Metrics — <span id="metricsCoinLabel">BTCUSDT</span></div>
+        <div class="flow-metrics" id="flowMetrics">
+          <div class="flow-tile"><div class="flow-tile-label">Book Imbalance</div><div class="flow-tile-val" id="mBookImb">—</div><div class="flow-tile-sub">Bids vs Asks</div></div>
+          <div class="flow-tile"><div class="flow-tile-label">Taker Buy %</div><div class="flow-tile-val" id="mTaker">—</div><div class="flow-tile-sub">Aggressor side</div></div>
+          <div class="flow-tile"><div class="flow-tile-label">Cum Delta</div><div class="flow-tile-val" id="mDelta">—</div><div class="flow-tile-sub">Net buy flow</div></div>
+          <div class="flow-tile"><div class="flow-tile-label">L/S Ratio</div><div class="flow-tile-val" id="mLS">—</div><div class="flow-tile-sub">Longs vs Shorts</div></div>
+        </div>
+
+        <!-- Taker ratio bar -->
+        <div style="margin-top:20px;">
+          <div class="icard-title" style="margin-bottom:8px;">Taker Flow Balance</div>
+          <div style="height:24px;border-radius:6px;overflow:hidden;display:flex;position:relative;">
+            <div id="takerBuyBar" style="height:100%;background:linear-gradient(90deg,#22C55E,#16A34A);border-radius:6px 0 0 6px;transition:width 0.6s ease;"></div>
+            <div id="takerSellBar" style="height:100%;background:linear-gradient(90deg,#F87171,#DC2626);border-radius:0 6px 6px 0;transition:width 0.6s ease;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:4px;">
+            <span style="color:#22C55E;font-weight:700;" id="takerBuyPct">—% Buy</span>
+            <span style="color:#EF4444;font-weight:700;" id="takerSellPct">—% Sell</span>
+          </div>
+        </div>
+
+        <!-- L/S gauge -->
+        <div style="margin-top:18px;">
+          <div class="icard-title" style="margin-bottom:8px;">Long/Short Ratio (Global)</div>
+          <canvas id="lsChart" height="80"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bid/Ask Walls -->
+    <div class="icard" style="margin-bottom:16px;">
+      <div class="icard-title">Detected Order Walls — <span id="wallsCoinLabel">BTCUSDT</span>
+        <span style="font-size:10px;color:var(--text-secondary);margin-left:8px;">
+          Wall = resting order ≥ 3× average level size &amp; ≥ $50,000 notional
+        </span>
+      </div>
+      <div id="wallsBody">
+        <div class="no-walls">Select a coin and refresh to detect walls</div>
+      </div>
+    </div>
+
+    <!-- All-coin flow heatmap -->
+    <div class="icard">
+      <div class="icard-title">Order Flow Heatmap — All Tracked Coins
+        <span style="font-size:10px;color:var(--text-secondary);margin-left:8px;">Updated from last bot analysis cycle</span>
+      </div>
+      <div class="flow-grid" id="flowHeatmap">
+        <div style="color:var(--text-secondary);font-size:13px;padding:16px;grid-column:1/-1;text-align:center;">
+          Waiting for bot analysis cycle…
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Spacer -->
+  <div style="height:40px;"></div>
+
+  <script src="/intelligence-app.js"></script>
+</body>
+</html>

@@ -95,7 +95,7 @@ function updateSummary(summary) {
     document.getElementById('summWinRate').textContent = (summary.win_rate_pct ?? 0) + '%';
 
     // ── Compute P&L fresh from trades (matches dashboard logic) ──
-    const MAX_CAPITAL = 1500;
+    const MAX_CAPITAL = 2500;
     const CAPITAL_PER_TRADE = 100;
     let realizedPnl = 0, unrealizedPnl = 0, activeCount = 0;
     (tradebookData?.trades || []).forEach(t => {
@@ -1162,7 +1162,7 @@ function computeReportStats(trades) {
             const dd = peak - eq;
             if (dd > maxDD) maxDD = dd;
         });
-    const maxDrawdownPct = (maxDD / 1500 * 100);
+    const maxDrawdownPct = (maxDD / 2500 * 100);
 
     return {
         closedCount: closed.length, activeCount: active.length,
@@ -1322,7 +1322,7 @@ function generateInsights(stats, trades) {
             insights.push({
                 title: `High Leverage Risk: ${lev}x`,
                 body: `${lev}x leverage: ${data.count} trades, ${wr.toFixed(0)}% WR, avg P&L $${avgPnl.toFixed(2)}/trade.`,
-                action: `Review conviction scoring thresholds. High leverage (${lev}x) is amplifying losses on the ${(100 - wr).toFixed(0)}% losing trades. Consider raising minimum conviction score.`
+                action: `Cap leverage at 15x. High leverage amplifies losses on the ${(100 - wr).toFixed(0)}% losing trades.`
             });
         }
     }
@@ -1398,8 +1398,8 @@ function _buildReportPdf(stats) {
             ['Avg Loss', `-$${stats.avgLoss.toFixed(2)}`],
             ['Total Commission', `$${stats.totalCommission.toFixed(2)}`],
             ['Total Capital Deployed', `$${stats.totalCapital.toFixed(0)}`],
-            ['Max Portfolio Capital', '$1,500'],
-            ['ROI (on Max Capital)', `${(stats.totalPnl / 1500 * 100).toFixed(2)}%`],
+            ['Max Portfolio Capital', '$2,500'],
+            ['ROI (on Max Capital)', `${(stats.totalPnl / 2500 * 100).toFixed(2)}%`],
             ['Period', `${stats.minDate} – ${stats.maxDate}`],
         ],
         theme: 'striped',

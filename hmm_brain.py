@@ -13,8 +13,7 @@ import config
 logger = logging.getLogger("HMMBrain")
 
 # Feature columns used for HMM training/prediction (must match feature_engine.compute_hmm_features)
-HMM_FEATURES = ["log_return", "volatility", "volume_change", "rsi_norm",
-                 "vwap_position", "sr_position", "oi_change", "funding_norm"]
+HMM_FEATURES = ["log_return", "volatility", "volume_change", "rsi_norm"]
 
 
 class HMMBrain:
