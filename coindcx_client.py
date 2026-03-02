@@ -25,6 +25,26 @@ BASE_URL = config.COINDCX_BASE_URL        # https://api.coindcx.com
 PUBLIC_URL = config.COINDCX_PUBLIC_URL     # https://public.coindcx.com
 FUTURES_PREFIX = "/exchange/v1/derivatives/futures"
 
+# ─── Requests Session with Retry ─────────────────────────────────────────────────
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def get_session():
+    """Create a requests Session with retry logic."""
+    session = requests.Session()
+    retries = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET", "POST"]
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+_session = get_session()
+
 
 # ─── Authentication ──────────────────────────────────────────────────────────────
 
@@ -51,7 +71,7 @@ def _private_post(endpoint, body_dict):
     json_body, signature = _sign(body_dict)
     url = f"{BASE_URL}{endpoint}"
     try:
-        resp = requests.post(url, data=json_body, headers=_auth_headers(signature), timeout=15)
+        resp = _session.post(url, data=json_body, headers=_auth_headers(signature), timeout=15)
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.HTTPError as e:
@@ -70,7 +90,7 @@ def _private_get(endpoint, body_dict):
     json_body, signature = _sign(body_dict)
     url = f"{BASE_URL}{endpoint}"
     try:
-        resp = requests.get(url, data=json_body, headers=_auth_headers(signature), timeout=15)
+        resp = _session.get(url, data=json_body, headers=_auth_headers(signature), timeout=15)
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.HTTPError as e:
@@ -192,7 +212,7 @@ def get_candlesticks(pair, interval, limit=500):
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = _session.get(url, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -231,7 +251,7 @@ def get_current_prices():
     """
     url = f"{PUBLIC_URL}/market_data/v3/current_prices/futures/rt"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = _session.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         return data.get("prices", {})

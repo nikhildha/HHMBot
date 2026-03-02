@@ -600,40 +600,121 @@ function updateTradeLog(trades) {
     const area = document.getElementById('tradeLogArea');
     if (!area) return;
 
-    if (!trades || trades.length === 0) {
-        area.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">📝</div>
-        <p>Trade history will appear here once the bot executes trades.</p>
-      </div>`;
+    const html = trades.slice(0, 50).map(t => {
+        const side = t.side === 'BUY' ? 'LONG' : 'SHORT';
+        const sideClass = side === 'LONG' ? 'side-buy' : 'side-sell';
+        const pnl = t.realized_pnl || 0;
+        const pnlClass = pnl >= 0 ? 'pnl-green' : 'pnl-red';
+        const pnlSign = pnl >= 0 ? '+' : '';
+
+        return `<tr>
+      <td>${formatDate(t.exit_timestamp)}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td class="${sideClass}">${side}</td>
+      <td>${t.leverage}x</td>
+      <td>${formatPrice(t.entry_price)}</td>
+      <td>${formatPrice(t.exit_price)}</td>
+      <td class="${pnlClass}">${pnlSign}$${pnl.toFixed(2)}</td>
+      <td>${t.exit_reason}</td>
+    </tr>`;
+    }).join('');
+
+    area.innerHTML = `<table class="data-table">
+    <thead><tr>
+      <th>Time</th><th>Symbol</th><th>Side</th><th>Lev</th>
+      <th>Entry</th><th>Exit</th><th>P&L</th><th>Reason</th>
+    </tr></thead>
+    <tbody>${html}</tbody>
+  </table>`;
+}
+
+// ─── Regime Drivers Table (Ported from Intelligence) ─────────────────────────
+function updateRegimeDriversTable(coinStates) {
+    const tbody = document.getElementById('regimeDriversBody');
+    if (!tbody) return;
+
+    if (!coinStates || Object.keys(coinStates).length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:20px; color:var(--text-secondary);">Waiting for data cycle...</td></tr>';
         return;
     }
 
-    let html = `<table class="data-table">
-    <thead><tr>
-      <th>Time</th><th>Symbol</th><th>Side</th><th>Price</th><th>Qty</th><th>Leverage</th><th>Regime</th>
-    </tr></thead><tbody>`;
+    tbody.innerHTML = '';
+    const coins = Object.values(coinStates).sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-    // Show most recent first
-    const sorted = [...trades].reverse();
-    sorted.forEach(t => {
-        const sideClass = t.side === 'BUY' ? 'side-buy' : 'side-sell';
-        const sideIcon = t.side === 'BUY' ? '▲' : '▼';
+    coins.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.style.cssText = "border-bottom:1px solid #F1F5F9; font-size:11px; font-weight:600;";
 
-        html += `<tr>
-      <td>${formatDate(t.timestamp)}</td>
-      <td><strong>${t.symbol || '—'}</strong></td>
-      <td class="${sideClass}">${sideIcon} ${t.side || '—'}</td>
-      <td>${formatPrice(t.entry_price)}</td>
-      <td>${parseFloat(t.quantity || 0).toFixed(4)}</td>
-      <td><span class="leverage-badge">${t.leverage || 1}x</span></td>
-      <td>${t.regime || '—'}</td>
-    </tr>`;
+        // Helpers
+        const fmt = (val, dec = 3) => val !== undefined && val !== null ? val.toFixed(dec) : '-';
+        const fmtPct = (val) => val !== undefined && val !== null ? (val * 100).toFixed(2) + '%' : '-';
+        const col = (val, inv = false) => {
+            if (val === undefined || val === null) return '#64748B';
+            if (Math.abs(val) < 0.0001) return '#64748B';
+            if (!inv) return val > 0 ? '#16A34A' : '#DC2626';
+            return val > 0 ? '#DC2626' : '#16A34A';
+        };
+
+        // Features
+        const f = c.features || {};
+        const logret = f.log_return;
+        const vol = f.volatility;
+        const vola = f.volume_change;
+        const rsi = f.rsi_norm;
+        const oi = f.oi_change;
+        const fund = f.funding;
+
+        // Regime Color
+        let regColor = '#64748B';
+        let regBg = '#F1F5F9';
+        if (c.regime.includes('BULL')) { regColor = '#15803D'; regBg = '#DCFCE7'; }
+        if (c.regime.includes('BEAR')) { regColor = '#B91C1C'; regBg = '#FEE2E2'; }
+        if (c.regime.includes('CHOP')) { regColor = '#B45309'; regBg = '#FEF3C7'; }
+
+        // Action Color
+        let actColor = '#64748B';
+        if (c.action.includes('ELIGIBLE')) actColor = '#16A34A';
+        if (c.action.includes('SKIP') || c.action.includes('VETO')) actColor = '#DC2626';
+
+        tr.innerHTML = `
+            <td style="padding:10px; font-weight:700;">${c.symbol.replace('USDT', '')}</td>
+            <td style="padding:10px;">
+                <span style="background:${regBg}; color:${regColor}; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;">
+                    ${c.regime}
+                </span>
+            </td>
+            <td style="padding:10px; color:${c.confidence > 0.7 ? '#16A34A' : '#64748B'}">${fmtPct(c.confidence)}</td>
+            
+            <td style="padding:10px;">
+               <span style="background:${logret > 0 ? '#DCFCE7' : (logret < 0 ? '#FEE2E2' : '')}; color:${col(logret)}; padding:2px 6px; border-radius:4px;">
+                 ${fmt(logret, 4)}
+               </span>
+            </td>
+            
+            <td style="padding:10px; color:${vol > 0.02 ? '#F59E0B' : '#64748B'}">${fmt(vol, 4)}</td>
+            
+            <td style="padding:10px;">
+                <span style="color:${col(vola)};">${fmt(vola, 2)}</span>
+            </td>
+            
+            <td style="padding:10px;">
+                <span style="color:${rsi > 0.8 ? '#DC2626' : (rsi < 0.2 ? '#16A34A' : '#64748B')}">${fmt(rsi, 2)}</span>
+            </td>
+            
+            <td style="padding:10px; color:${col(oi)};">${fmt(oi, 4)}</td>
+            
+            <td style="padding:10px; color:${col(fund)};">${fmt(fund, 6)}</td>
+            
+            <td style="padding:10px; text-align:right; font-weight:700; color:${actColor}; font-size:10px;">
+                ${c.action.replace('_', ' ')}
+            </td>
+        `;
+
+        tbody.appendChild(tr);
     });
-
-    html += '</tbody></table>';
-    area.innerHTML = html;
 }
+
+
 
 // ─── Regime Drivers — Feature Heatmap ────────────────────────────────────────
 function updateFeatureHeatmap(coinStates) {
@@ -759,7 +840,7 @@ function updateAll(data) {
     updateTicker(liveScanner);
     updateRegimeChart(liveScanner);
     updateConfChart(liveScanner);
-    updateFeatureHeatmap(multiState?.coin_states);
+    updateRegimeDriversTable(multiState?.coin_states);
     updateTradeLog(tradeLog);
     addExecLogEntry(multiState);
 }
@@ -799,7 +880,7 @@ socket.on('full-update', (data) => {
         updateTicker(liveScanner);
         updateRegimeChart(liveScanner);
         updateConfChart(liveScanner);
-        updateFeatureHeatmap(multiState?.coin_states);
+        updateRegimeDriversTable(multiState?.coin_states);
         updateTradeLog(tradeLog);
         addExecLogEntry(multiState);
         return;
@@ -837,7 +918,7 @@ socket.on('multi-update', (multi) => {
             updateRegimeChart({ coins });
             updateConfChart({ coins });
         }
-        updateFeatureHeatmap(multi.coin_states);
+        updateRegimeDriversTable(multi.coin_states);
     }
 });
 

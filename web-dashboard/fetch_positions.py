@@ -80,6 +80,7 @@ try:
         'count': len(active)
     }))
 except Exception as e:
+    # Minimal JSON response on error, but still try to return success=False
     print(json.dumps({
         'success': False,
         'error': str(e),

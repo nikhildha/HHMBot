@@ -215,7 +215,7 @@ class Trade:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def backtest_realistic(df, brain, initial_capital=10000, risk_per_trade=None,
-                       max_positions=1, verbose=False):
+                       max_positions=1, verbose=False, use_sr_vwap_filter=False):
     """
     Realistic per-trade backtest with SL/TP, trailing stops, fees, and position sizing.
     
@@ -325,24 +325,26 @@ def backtest_realistic(df, brain, initial_capital=10000, risk_per_trade=None,
                     # Boost confidence when entry aligns with S/R + VWAP
                     # Penalize confidence when entry is at unfavorable levels
                     adj_conf = conf
-                    if 'support' in df.columns and 'resistance' in df.columns and 'vwap' in df.columns:
-                        sup = df['support'].iloc[i] if not pd.isna(df['support'].iloc[i]) else close
-                        res = df['resistance'].iloc[i] if not pd.isna(df['resistance'].iloc[i]) else close
-                        vwap_val = df['vwap'].iloc[i] if not pd.isna(df['vwap'].iloc[i]) else close
-                        sr_range = res - sup if res > sup else atr
-                        
-                        if side == 'LONG':
-                            # Boost if near support, penalize if near resistance
-                            sr_dist = (close - sup) / sr_range  # 0=support, 1=resistance
-                            sr_bias = 0.03 * (1 - sr_dist * 2)  # +3% at support, -3% at resistance
-                            # Boost if below VWAP (buying cheap), penalize if above
-                            vwap_bias = 0.02 if close <= vwap_val else -0.02
-                        else:  # SHORT
-                            sr_dist = (res - close) / sr_range  # 0=resistance, 1=support
-                            sr_bias = 0.03 * (1 - sr_dist * 2)  # +3% at resistance, -3% at support
-                            vwap_bias = 0.02 if close >= vwap_val else -0.02
-                        
-                        adj_conf = min(1.0, max(0.0, conf + sr_bias + vwap_bias))
+                    if use_sr_vwap_filter and 'sr_position' in df.columns and 'vwap_position' in df.columns:
+                        sr_pos = df['sr_position'].iloc[i]
+                        vwap_pos = df['vwap_position'].iloc[i]
+                        if not pd.isna(sr_pos) and not pd.isna(vwap_pos):
+                            if side == 'LONG':
+                                # Trend Following: Boost if breaking out (>0.8) or bouncing from support (<0.2)
+                                if sr_pos > 0.8: sr_bias = 0.03
+                                elif sr_pos < 0.2: sr_bias = 0.02
+                                else: sr_bias = -0.02
+                                # Boost if price is above VWAP (uptrend confirmed)
+                                vwap_bias = 0.02 if vwap_pos > 0 else -0.02
+                            else:  # SHORT
+                                # Trend Following: Boost if breaking down (<0.2) or rejecting from resistance (>0.8)
+                                if sr_pos < 0.2: sr_bias = 0.03
+                                elif sr_pos > 0.8: sr_bias = 0.02
+                                else: sr_bias = -0.02
+                                # Boost if price is below VWAP (downtrend confirmed)
+                                vwap_bias = 0.02 if vwap_pos < 0 else -0.02
+                            
+                            adj_conf = min(1.0, max(0.0, conf + sr_bias + vwap_bias))
                     
                     # Recalculate leverage with adjusted confidence
                     leverage = RiskManager.get_dynamic_leverage(adj_conf, state)
@@ -462,7 +464,7 @@ def backtest_realistic(df, brain, initial_capital=10000, risk_per_trade=None,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def walk_forward_backtest(df_raw, train_window=500, test_window=100, step=100,
-                          initial_capital=10000, verbose=False):
+                          initial_capital=10000, verbose=False, use_sr_vwap_filter=False):
     """
     Walk-forward backtesting: train on N bars, test on next M bars, slide forward.
     Eliminates look-ahead bias entirely.
@@ -518,6 +520,7 @@ def walk_forward_backtest(df_raw, train_window=500, test_window=100, step=100,
         results = backtest_realistic(
             df_test, brain, initial_capital=capital,
             max_positions=1, verbose=verbose,
+            use_sr_vwap_filter=use_sr_vwap_filter
         )
         
         capital = results['final_capital']

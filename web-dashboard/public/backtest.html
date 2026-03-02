@@ -8,9 +8,28 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
         rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
+        /* ─── Header Override ─── */
+        /* We use styles.css for header, but backtest.html had custom styles. 
+           We rely on styles.css for base header, and override if needed, 
+           but to fix center alignment we just need the standard structure. */
+        
+        .header {
+            /* Ensure it matches standard header from styles.css if not already */
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #FFFFFF;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+            padding: 0 32px;
+            height: 64px;
+        }
+
+        /* Rest of local styles */
         * {
             margin: 0;
             padding: 0;
@@ -22,34 +41,7 @@
             background: #F0F4F8;
             color: #1A2332;
             min-height: 100vh;
-        }
-
-        /* ─── Header ─── */
-        .header {
-            background: #FFFFFF;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-            padding: 16px 32px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .header .logo {
-            font-size: 20px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-        }
-
-        .header nav a {
-            margin-left: 24px;
-            text-decoration: none;
-            color: #5A6A7E;
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        .header nav a.active {
-            color: #3B82F6;
+            padding-top: 64px; /* Space for fixed header */
         }
 
         /* ─── Main Layout ─── */
@@ -543,16 +535,22 @@
 
 <body>
 
+
+
     <div class="header">
         <div class="logo">SENTINEL</div>
         <nav>
             <a href="/">Dashboard</a>
+            <a href="/intelligence">Intelligence</a>
             <a href="/tradebook">Tradebook</a>
             <a href="/charts">Charts</a>
             <a href="/backtest" class="active">Backtest</a>
             <a href="/deploy">Deploy</a>
             <a href="/settings">Settings</a>
         </nav>
+        <div class="header-right">
+            <!-- Placeholder for alignment -->
+        </div>
     </div>
 
     <div class="main">

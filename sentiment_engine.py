@@ -30,7 +30,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Counter
 
 import config
 from sentiment_sources import (
@@ -77,6 +77,8 @@ class SentimentSignal:
     alert_reason: str                   # Description of the alert (if any)
     fear_greed: Optional[float]         # Overall market Fear & Greed (-1 to +1)
     sources_used: List[str] = field(default_factory=list)
+    source_counts: Dict[str, int] = field(default_factory=dict)
+    top_articles: List[Dict] = field(default_factory=list)  # Top 3 articles: {title, url, score, source}
     article_count: int = 0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -145,6 +147,7 @@ class SentimentEngine:
         self._vader      = _load_vader()
         self._sources    = self._build_sources()
         self._fg_source  = FearGreedSource()
+        self._market_source_stats: Dict[str, int] = {}
 
         # Cache: coin → (SentimentSignal, fetched_at)
         self._cache: Dict[str, Tuple[SentimentSignal, datetime]] = {}
@@ -198,6 +201,13 @@ class SentimentEngine:
         """Warm the cache for multiple coins (call once per analysis cycle)."""
         for sym in symbols:
             self.get_coin_sentiment(sym)
+
+    def get_source_stats(self) -> Dict[str, int]:
+        """Return aggregated source counts across all cached signals."""
+        agg = Counter()
+        for signal, _ in self._cache.values():
+            agg.update(signal.source_counts)
+        return dict(agg)
 
     # ─── Internal: building signals ──────────────────────────────────────────
 
@@ -268,16 +278,17 @@ class SentimentEngine:
             source_key = art.source.split(":")[0]
             source_w = _SOURCE_WEIGHTS.get(source_key, 0.6)
             weight = art.importance * source_w
-            scored.append((nlp_score, weight, art.source))
+            scored.append((nlp_score, weight, art.source, art))
 
         # Weighted average
-        total_w = sum(w for _, w, _ in scored)
-        composite = sum(s * w for s, w, _ in scored) / total_w if total_w > 0 else 0.0
+        # Weighted average
+        total_w = sum(w for _, w, _, _ in scored)
+        composite = sum(s * w for s, w, _, _ in scored) / total_w if total_w > 0 else 0.0
         composite = max(-1.0, min(1.0, composite))
 
         # Confidence: rises with article count and source diversity
         n = len(articles)
-        source_diversity = len(set(s.split(":")[0] for _, _, s in scored))
+        source_diversity = len(set(s.split(":")[0] for _, _, s, _ in scored))
         confidence = min(1.0, (min(n, 20) / 20) * 0.7 + (min(source_diversity, 3) / 3) * 0.3)
         if n < config.SENTIMENT_MIN_ARTICLES:
             confidence *= 0.5
@@ -293,10 +304,31 @@ class SentimentEngine:
         # Store this score for next momentum calc
         self._prev_scores[coin] = (composite, datetime.now(timezone.utc))
 
-        sources_used = list(set(s.split(":")[0] for _, _, s in scored))
+        sources_used = list(set(s.split(":")[0] for _, _, s, _ in scored))
 
         # Include Fear & Greed as a mild global adjustment (not per-coin)
         fg_score = fg.normalized if fg else 0.0
+
+        # Calculate source counts
+        source_counts = {}
+        for _, _, src, _ in scored:
+            category = src.split(":")[0]  # "RSS", "Reddit", "CryptoPanic"
+            source_counts[category] = source_counts.get(category, 0) + 1
+
+        # Extract Top 3 Impact Articles
+        top_articles = []
+        try:
+            # Sort by absolute score descending (impact)
+            sorted_by_impact = sorted(scored, key=lambda x: abs(x[0]), reverse=True)[:3]
+            for s_score, _, s_src, s_art in sorted_by_impact:
+                top_articles.append({
+                    "title": s_art.title,
+                    "url": s_art.url,
+                    "score": round(s_score, 2),
+                    "source": s_src
+                })
+        except Exception:
+            pass
 
         return SentimentSignal(
             coin=coin,
@@ -308,6 +340,8 @@ class SentimentEngine:
             alert_reason="; ".join(set(alert_reasons)),
             fear_greed=fg_score,
             sources_used=sources_used,
+            source_counts=source_counts,
+            top_articles=top_articles,
             article_count=n,
         )
 

@@ -56,12 +56,19 @@
   padding: 0;
 }
 
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+}
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
-  overflow-x: hidden;
   line-height: 1.6;
   position: relative;
 }
@@ -85,6 +92,7 @@ body::before {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   width: 100%;
+  max-width: 100vw;
   height: 42px;
   display: flex;
   align-items: center;
@@ -1315,4 +1323,105 @@ body::before {
 
 .log-line.log-debug {
   color: #6B7280;
+}
+/* ─── Intelligence Page Specifics ────────────────────────────────────────────── */
+.icard {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.icard:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.icard-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.wall-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wall-row:last-child {
+  border-bottom: none;
+}
+
+.flow-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.flow-tile {
+  background: var(--bg-card-alt);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.flow-tile-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.flow-tile-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.flow-tile-sub {
+  font-size: 9px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+/* Color helpers for flow values */
+.fc-buy {
+  color: var(--accent-green) !important;
+}
+
+.fc-sell {
+  color: var(--accent-red) !important;
+}
+
+.fc-strong-buy {
+  color: #15803D !important;
+  font-weight: 800;
+}
+
+.fc-strong-sell {
+  color: #B91C1C !important;
+  font-weight: 800;
+}
+
+.fc-neutral {
+  color: var(--text-secondary) !important;
+}
+
+/* 3-column grid for intelligence page */
+.intel-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }

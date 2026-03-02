@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
+    <script src="/socket.io/socket.io.js"></script>
     <style>
         /* ─── Tab Bar ─────────────────────────────────────────────────────────── */
         .settings-tabs {
@@ -435,6 +436,8 @@
 
 <body>
 
+
+
     <!-- ═══ Header ═══ -->
     <header class="header">
         <div class="logo">
@@ -445,6 +448,7 @@
         </div>
         <nav class="header-nav">
             <a href="/" class="nav-link">Dashboard</a>
+            <a href="/intelligence" class="nav-link">Intelligence</a>
             <a href="/tradebook" class="nav-link">Tradebook</a>
             <a href="/charts" class="nav-link">Charts</a>
             <a href="/backtest" class="nav-link">Backtest</a>
@@ -475,6 +479,12 @@
             </button>
             <button class="tab-btn" onclick="switchTab('integrations', this)">
                 <span class="tab-icon">🔌</span> Integrations
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'tab-paper')">
+                <span class="tab-icon">📄</span> Paper Trading
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'tab-api')">
+                <span class="tab-icon">🔑</span> Private API Config
             </button>
             <button class="tab-btn" onclick="switchTab('research', this)">
                 <span class="tab-icon">🔬</span> Research
@@ -2150,7 +2160,69 @@
             SENTINEL Regime Engine v2.0 · Built with HMM + Multi-Timeframe Analysis
         </div>
 
-    </div>
+        <!-- ─── TAB: API CONFIG ───────────────────────────────────────────────── -->
+        <div id="tab-api" class="tab-pane">
+            <div class="card">
+                <div class="arch-section-header">
+                    <h2>API Connection Details</h2>
+                </div>
+                <div class="arch-section-body">
+                    <div class="config-table-wrapper" style="margin-bottom:24px;">
+                        <table class="config-table">
+                            <tbody>
+                                <tr>
+                                    <td width="200">Connection Status</td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:8px;">
+                                            <span class="status-pill online" id="apiStatusPill" style="display:none;">
+                                                <span class="dot"></span> Active
+                                            </span>
+                                            <span class="status-pill offline" id="apiStatusPillOff">
+                                                <span class="dot"></span> Offline
+                                            </span>
+                                            <span style="font-size:12px;color:var(--text-tertiary);" id="apiLatency">— ms</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Wallet Balance</td>
+                                    <td>
+                                        <div style="font-size:18px;font-weight:700;color:var(--text-primary);" id="apiBalance">—
+                                        </div>
+                                        <div style="font-size:11px;color:var(--text-secondary);">Available USDT / INR</div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>API Key</td>
+                                    <td>
+                                        <div
+                                            style="font-family:monospace;background:var(--bg-primary);padding:4px 8px;border-radius:4px;display:inline-block;">
+                                            ************<span id="apiKeyLast">ABCD</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+        
+                    <div
+                        style="background:var(--bg-card-alt);padding:20px;border-radius:12px;display:flex;align-items:center;justify-content:space-between;">
+                        <div>
+                            <div style="font-size:14px;font-weight:700;color:var(--text-primary);">Global Bot Control</div>
+                            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Master switch to
+                                Pause/Resume trading
+                                loop</div>
+                                        </div>
+                                        <label class="switch">
+                                            <input type="checkbox" id="botMasterSwitch" checked onchange="toggleBot(this)">
+                                            <span class="slider round"></span>
+                                        </label>
+                                        </div>
+                                        </div>
+                                        </div>
+                                        </div>
+                                        
+                                        </main>
 
     <!-- ═══ Dynamic Config Loader ═══ -->
     <script>
@@ -2467,7 +2539,74 @@
             statusEl.textContent = '🧪 Sending test...';
             statusEl.style.color = 'var(--text-secondary)';
             try {
-                const chatId = document.getElementById('tgChatId').value.trim();
+                // ═══════════════════════════════════════════════════════════════════
+                //  API CONFIG LOGIC
+                // ═══════════════════════════════════════════════════════════════════
+                async function loadApiStatus() {
+                    try {
+                        const res = await fetch('/api/status');
+                        const data = await res.json();
+
+                        // Connection Status
+                        const pillOn = document.getElementById('apiStatusPill');
+                        const pillOff = document.getElementById('apiStatusPillOff');
+                        const latEl = document.getElementById('apiLatency');
+
+                        if (data.status === 'active') {
+                            pillOn.style.display = 'flex';
+                            pillOff.style.display = 'none';
+                            latEl.textContent = data.latency + ' ms';
+                            latEl.style.color = '#22C55E';
+                        } else {
+                            pillOn.style.display = 'none';
+                            pillOff.style.display = 'flex';
+                            latEl.textContent = '— ms';
+                            latEl.style.color = 'var(--text-tertiary)';
+                        }
+
+                        // Balance
+                        const balEl = document.getElementById('apiBalance');
+                        if (data.balance !== null) {
+                            balEl.textContent = 'USDT ' + Number(data.balance).toLocaleString();
+                        } else {
+                            balEl.textContent = '—';
+                        }
+
+                        // API Key masking
+                        if (data.keyLast4) {
+                            document.getElementById('apiKeyLast').textContent = data.keyLast4;
+                        }
+
+                        // Master Switch
+                        document.getElementById('botMasterSwitch').checked = data.botActive;
+
+                    } catch (e) {
+                        console.error('API Status Load Error:', e);
+                    }
+                }
+
+                async function toggleBot(el) {
+                    const active = el.checked;
+                    try {
+                        const res = await fetch('/api/bot/toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active })
+                        });
+                        const data = await res.json();
+                        if (!data.success) {
+                            el.checked = !active; // Revert if failed
+                            alert('Failed to toggle bot: ' + data.error);
+                        }
+                    } catch (e) {
+                        el.checked = !active;
+                        console.error('Toggle Error:', e);
+                    }
+                }
+
+                // Load on startup and refresher
+                loadApiStatus();
+                setInterval(loadApiStatus, 10000); // Refresh every 10s
                 const res = await fetch('/api/telegram/test', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: chatId }),

@@ -136,13 +136,16 @@ def compute_indicators(df):
     return df
 
 
+
 def compute_all_features(df):
     """
     Convenience: computes BOTH HMM features AND technical indicators.
     """
     df = compute_hmm_features(df)
     df = compute_indicators(df)
+    
     return df
+
 
 
 # ─── Synthetic Data Generator (for testing) ─────────────────────────────────────

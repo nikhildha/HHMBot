@@ -4,6 +4,10 @@
 
 /* ─── Navigation (inherits from styles.css, overrides not needed) ──────────── */
 
+/* ─── Layout Overrides ────────────────────────────────────────────────────────── */
+.tradebook-main {
+    max-width: 1800px;
+}
 /* ─── Connection Status ───────────────────────────────────────────────────── */
 .status-pill.online {
     background: rgba(34, 197, 94, 0.08);

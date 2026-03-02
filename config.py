@@ -122,12 +122,13 @@ SIDEWAYS_POSITION_REDUCTION = 0.30  # 30% smaller positions in chop
 
 # ─── Bot Loop ────────────────────────────────────────────────────────────────────
 LOOP_INTERVAL_SECONDS = 60        # 1-minute heartbeat (checks commands, updates state)
-ANALYSIS_INTERVAL_SECONDS = 900   # 15-minute full analysis cycle (HMM scan, trades)
+ANALYSIS_INTERVAL_SECONDS = 60   # 1-minute full analysis cycle (for debugging)
 ERROR_RETRY_SECONDS = 60          # Retry after error
 
 # ─── Multi-Coin Trading ──────────────────────────────────────────────────────────
 MAX_CONCURRENT_POSITIONS = 15   # Max symbols traded at once
-TOP_COINS_LIMIT = 15            # How many coins to scan (reduced from 50 for speed)
+
+TOP_COINS_LIMIT = 25            # Reduced from 50 to 25 per user request
 CAPITAL_PER_COIN_PCT = 0.05     # 5% of balance per coin (max 15 = 75% deployed)
 SCAN_INTERVAL_CYCLES = 4        # Re-scan top coins every N analysis cycles (4 × 15m = 1h)
 MULTI_COIN_MODE = True          # Enable multi-coin scanning
@@ -175,7 +176,7 @@ SENTIMENT_LOG_FILE       = os.path.join(DATA_DIR, "sentiment_log.csv")
 ORDERFLOW_ENABLED          = os.getenv("ORDERFLOW_ENABLED", "true").lower() == "true"
 ORDERFLOW_CACHE_SECONDS    = 60        # Cache orderflow snapshot per coin (60s)
 ORDERFLOW_DEPTH_LEVELS     = 20        # Number of L2 order book levels to fetch
-ORDERFLOW_WALL_THRESHOLD   = 3.0       # A level is a "wall" if it is N× the avg level size
+ORDERFLOW_WALL_THRESHOLD   = 1.5       # A level is a "wall" if it is N× the avg level size
 ORDERFLOW_LOOKBACK_BARS    = 4         # Bars of 15m taker data to sum for cumulative delta
 ORDERFLOW_LS_ENABLED       = True      # Include L/S ratio from Binance futures
 ORDERFLOW_LARGE_ORDER_USD  = 50_000    # USD threshold to flag a single order as "large"
@@ -189,3 +190,14 @@ CONVICTION_WEIGHT_OI        = 8    # Open Interest change
 CONVICTION_WEIGHT_VOL       = 5    # Volatility quality
 CONVICTION_WEIGHT_SENTIMENT = 15   # Social/news sentiment
 CONVICTION_WEIGHT_ORDERFLOW = 10   # Order book flow
+
+# ─── Backtesting Configs ──────────────────────────────────────────────────────
+SKIP_CHOP_TRADES = True
+COUNTER_TREND_CONF_PENALTY = 0.04
+TRAILING_SL_ENABLED = True
+TRAILING_SL_ACTIVATION_ATR = 1.5
+TRAILING_SL_DISTANCE_ATR = 1.0
+TRAILING_TP_ENABLED = True
+TRAILING_TP_MAX_EXTENSIONS = 2
+TRAILING_TP_ACTIVATION_PCT = 0.8
+TRAILING_TP_EXTENSION_ATR = 0.5

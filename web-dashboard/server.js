@@ -22,16 +22,46 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── HTML Page Routes ────────────────────────────────────────────────────────
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/intelligence', (req, res) => res.sendFile(path.join(__dirname, 'public', 'intelligence.html')));
+app.get('/tradebook', (req, res) => res.sendFile(path.join(__dirname, 'public', 'tradebook.html')));
+app.get('/charts', (req, res) => res.sendFile(path.join(__dirname, 'public', 'charts.html')));
+app.get('/backtest', (req, res) => res.sendFile(path.join(__dirname, 'public', 'backtest.html')));
+app.get('/deploy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'deploy.html')));
+app.get('/settings', (req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
+
 // ─── Helper: Safe JSON read ──────────────────────────────────────────────────
+
 function readJSON(filename) {
     const filepath = path.join(DATA_DIR, filename);
     try {
         if (!fs.existsSync(filepath)) return null;
-        return JSON.parse(fs.readFileSync(filepath, 'utf8'));
+
+        // Retry logic for race conditions (Python writing while Node reading)
+        let content = '';
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                content = fs.readFileSync(filepath, 'utf8');
+                if (content && content.trim().length > 0) {
+                    return JSON.parse(content);
+                }
+            } catch (err) {
+                // Ignore and retry
+            }
+            retries--;
+            // Sync sleep (ugly but necessary for simple script)
+            const start = Date.now();
+            while (Date.now() - start < 50);
+        }
+        return null;
     } catch (e) {
+        console.error(`[ReadJSON] Error reading ${filename}: ${e.message}`);
         return null;
     }
 }
+
 
 function readCSV(filename) {
     const filepath = path.join(DATA_DIR, filename);
@@ -100,6 +130,75 @@ app.get('/api/coindcx/positions', (req, res) => {
     } catch (e) {
         console.error('[CoinDCX API] Error:', e.message);
         res.json({ success: false, error: e.message, positions: [], wallet_balance: 0, count: 0 });
+    }
+});
+
+// ─── API Status & Control ────────────────────────────────────────────────────
+app.get('/api/status', async (req, res) => {
+    try {
+        // Read config for API keys (masked)
+        const configPath = path.join(__dirname, '..', 'config.py');
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        const keyMatch = configContent.match(/COINDCX_API_KEY\s*=\s*["'](.+)["']/);
+        const secretMatch = configContent.match(/COINDCX_API_SECRET\s*=\s*["'](.+)["']/);
+        const hasKeys = keyMatch && secretMatch && keyMatch[1] !== 'YOUR_API_KEY';
+
+        let keyLast4 = '';
+        if (hasKeys) {
+            keyLast4 = keyMatch[1].slice(-4);
+        }
+
+        // Check bot active status from a file or memory
+        const pauseFile = path.join(DATA_DIR, 'bot_pause.lock');
+        const botActive = !fs.existsSync(pauseFile);
+
+        // Fetch Balance & Latency via Python script (reusing fetch_positions.py or new one)
+        // For now, we'll genericize fetch_positions to also return status
+        const { execSync } = require('child_process');
+        const scriptPath = path.join(__dirname, 'fetch_positions.py');
+        let balance = null;
+        let latency = 0;
+        let status = 'inactive';
+
+        if (hasKeys) {
+            const start = Date.now();
+            try {
+                const result = execSync(`cd "${path.join(__dirname, '..')}" && python3 "${scriptPath}"`, { timeout: 10000 });
+                const data = JSON.parse(result.toString().trim().split('\n').pop());
+                if (data.success) {
+                    balance = data.wallet_balance;
+                    status = 'active';
+                    latency = Date.now() - start;
+                }
+            } catch (e) {
+                // inactive or error
+            }
+        }
+
+        res.json({
+            status,
+            latency,
+            balance,
+            keyLast4,
+            botActive
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/bot/toggle', (req, res) => {
+    const { active } = req.body;
+    const pauseFile = path.join(DATA_DIR, 'bot_pause.lock');
+    try {
+        if (active) {
+            if (fs.existsSync(pauseFile)) fs.unlinkSync(pauseFile);
+        } else {
+            fs.writeFileSync(pauseFile, new Date().toISOString());
+        }
+        res.json({ success: true, active });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 

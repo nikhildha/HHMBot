@@ -21,6 +21,7 @@ import tradebook
 import telegram as tg
 import sentiment_engine as _sent_mod
 import orderflow_engine as _of_mod
+import coindcx_client as cdx
 
 # ─── Logging Setup ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -63,6 +64,7 @@ class RegimeMasterBot:
         self._active_positions = {}  # symbol → {regime, confidence, side, entry_time}
         self._coin_brains = {}       # symbol → HMMBrain (cached per coin)
         self._coin_states = {}       # symbol → latest state dict (for dashboard)
+        self._live_prices = {}       # symbol → {ls, fr, ...} (fetched each cycle)
 
         # ── Startup: sync _active_positions from tradebook ──────────
         self._load_positions_from_tradebook()
@@ -233,6 +235,13 @@ class RegimeMasterBot:
             symbols = self._coin_list
         else:
             symbols = [config.PRIMARY_SYMBOL]
+
+        # ── 1b. Fetch live market data (Funding, Prices) ──────────
+        try:
+            self._live_prices = cdx.get_current_prices()
+        except Exception as e:
+            logger.warning("Failed to fetch live prices: %s", e)
+            self._live_prices = {}
 
         # ── 2. Global equity + kill switch check ─────────────────
         balance = self.executor.get_futures_balance()
@@ -497,11 +506,22 @@ class RegimeMasterBot:
         _features = {}
         try:
             last = df_1h_feat.iloc[-1]
+            
+            # Get real-time funding (if available)
+            cdx_pair = cdx.to_coindcx_pair(symbol)
+            live_info = self._live_prices.get(cdx_pair, {})
+            # 'fr' is official Funding Rate, 'efr' is Estimated Funding Rate
+            live_fund = float(live_info.get("fr", 0.0))
+            if live_fund == 0.0:
+                 live_fund = float(live_info.get("efr", 0.0))
+
             _features = {
                 "log_return":    round(float(last.get("log_return", 0)), 6),
                 "volatility":    round(float(last.get("volatility", 0)), 6),
                 "volume_change": round(float(last.get("volume_change", 0)), 6),
                 "rsi_norm":      round(float(last.get("rsi_norm", 0)), 6),
+                "oi_change":     0.0, # Not available in API
+                "funding":       round(live_fund, 8),
             }
         except Exception:
             pass
@@ -588,8 +608,11 @@ class RegimeMasterBot:
         coin_sym = symbol.replace("USDT", "").replace("BUSD", "")
         if self._sentiment:
             try:
-                s_sig = self._sentiment.get_signal(coin_sym)
+                s_sig = self._sentiment.get_coin_sentiment(coin_sym)
                 if s_sig is not None:
+                    # Store news for dashboard
+                    self._coin_states[symbol]["news"] = s_sig.top_articles
+                    
                     if s_sig.alert:
                         self._coin_states[symbol]["action"] = f"SENTIMENT_ALERT:{s_sig.alert_reason}"
                         return None
@@ -609,12 +632,8 @@ class RegimeMasterBot:
                 df_15m_feat = compute_all_features(df_15m)
                 price_now   = float(df_15m_feat["close"].iloc[-1])
                 price_5_ago = float(df_15m_feat["close"].iloc[-5])
-                if side == "BUY"  and price_now <= price_5_ago:
-                    self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
-                    return None
-                if side == "SELL" and price_now >= price_5_ago:
-                    self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
-                    return None
+                # Momentum check moved after Order Flow to ensure data visibility
+                pass
         except Exception:
             pass
 
@@ -623,17 +642,46 @@ class RegimeMasterBot:
                 of_sig = self._orderflow.get_signal(symbol, df_15m)
                 if of_sig is not None:
                     orderflow_score = of_sig.score
+                    # Export detailed metrics for dashboard
+                    self._coin_states[symbol]["orderflow_details"] = {
+                        "score": round(of_sig.score, 2),
+                        "imbalance": round(of_sig.book_imbalance, 2),
+                        "taker_buy_ratio": round(of_sig.taker_buy_ratio, 2),
+                        "cumulative_delta": round(of_sig.cumulative_delta, 2),
+                        "ls_ratio": round(of_sig.ls_ratio, 2),
+                        "bid_walls": [
+                            {"price": w.price, "size": w.size_usd, "multiple": round(w.multiple, 1)} 
+                            for w in of_sig.bid_walls
+                        ],
+                        "ask_walls": [
+                            {"price": w.price, "size": w.size_usd, "multiple": round(w.multiple, 1)} 
+                            for w in of_sig.ask_walls
+                        ]
+                    }
+
                     if of_sig.bid_walls or of_sig.ask_walls:
                         logger.info("🧱 %s order walls: %s", symbol, of_sig.note)
             except Exception as _oe:
                 logger.debug("OrderFlow fetch failed for %s: %s", symbol, _oe)
 
+        # ─── Post-OrderFlow Momentum Filter ───
+        if df_15m is not None and len(df_15m) >= 5:
+            try:
+                price_now   = float(df_15m_feat["close"].iloc[-1])
+                price_5_ago = float(df_15m_feat["close"].iloc[-5])
+                if side == "BUY"  and price_now <= price_5_ago:
+                    self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
+                    return None
+                if side == "SELL" and price_now >= price_5_ago:
+                    self._coin_states[symbol]["action"] = "15M_FILTER_SKIP"
+                    return None
+            except Exception:
+                pass
+
         # 5. Full 8-factor conviction score
         _regime_name_to_int = {v: k for k, v in config.REGIME_NAMES.items()}
         btc_proxy   = _regime_name_to_int.get(macro_regime_name) if macro_regime_name else None
         funding     = df_1h_feat["funding_rate"].iloc[-1] if "funding_rate" in df_1h_feat.columns else None
-        sr_pos      = df_1h_feat["sr_position"].iloc[-1]  if "sr_position"  in df_1h_feat.columns else None
-        vwap_pos    = df_1h_feat["vwap_position"].iloc[-1] if "vwap_position" in df_1h_feat.columns else None
         oi_chg      = df_1h_feat["oi_change"].iloc[-1]    if "oi_change"    in df_1h_feat.columns else None
         volatility  = (current_atr / current_price)       if current_atr > 0 else None
 
@@ -643,8 +691,6 @@ class RegimeMasterBot:
             side=side,
             btc_regime=btc_proxy,
             funding_rate=funding,
-            sr_position=sr_pos,
-            vwap_position=vwap_pos,
             oi_change=oi_chg,
             volatility=volatility,
             sentiment_score=sentiment_score,
@@ -891,6 +937,8 @@ class RegimeMasterBot:
                 "positions": positions_dict,
                 "max_concurrent_positions": config.MAX_CONCURRENT_POSITIONS,
                 "coin_states": coin_states_dict,
+                "source_stats":     self._sentiment.get_source_stats() if self._sentiment else {},
+                "orderflow_stats":  self._get_orderflow_stats(),
                 "paper_mode": config.PAPER_TRADE,
                 "cycle_execution_time_seconds": 0,
             }
@@ -898,6 +946,33 @@ class RegimeMasterBot:
                 json.dump(multi_state, f, indent=2)
         except Exception as e:
             logger.debug("Failed to save multi_bot_state during sync: %s", e)
+
+    def _get_orderflow_stats(self) -> dict:
+        """Aggregate order flow stats for dashboard (Whale Walls, Inst. Flow)."""
+        if not self._orderflow:
+            return {}
+        
+        # We need to peek into the engine's cache or track it manually
+        # Since _orderflow is separate, let's just do a best-effort scan of cached coin_states for now
+        # OR better: Add a helper in OrderFlowEngine. For now, I'll iterate known symbols.
+        
+        walls_count = 0
+        inst_flow_count = 0
+        
+        # Scan recently analyzed coins
+        for sym in self._coin_states.keys():
+            sig = self._orderflow.get_signal(sym)
+            if sig:
+                # Count raw walls
+                walls_count += len(sig.bid_walls) + len(sig.ask_walls)
+                # Count "Institution Flow" signals (strong taker ratio or large cumulative delta)
+                if abs(sig.cumulative_delta) > 0.5 or abs(sig.taker_buy_ratio - 0.5) > 0.1:
+                    inst_flow_count += 1
+                    
+        return {
+            "WhaleWalls": walls_count,
+            "Institutional": inst_flow_count
+        }
 
     # ─── State Persistence ───────────────────────────────────────────────────
 
@@ -931,6 +1006,8 @@ class RegimeMasterBot:
             "active_positions": self._active_positions,
             "max_concurrent_positions": config.MAX_CONCURRENT_POSITIONS,
             "coin_states":      self._coin_states,
+            "source_stats":     self._sentiment.get_source_stats() if self._sentiment else {},
+            "orderflow_stats":  self._get_orderflow_stats(),
             "paper_mode":       config.PAPER_TRADE,
             "cycle_execution_time_seconds": getattr(self, '_last_cycle_duration', 0),
         }

@@ -36,6 +36,7 @@
       <a href="/charts" class="nav-link">Charts</a>
       <a href="/backtest" class="nav-link">Backtest</a>
       <a href="/deploy" class="nav-link">Deploy</a>
+      <a href="/intelligence.html" class="nav-link">Intelligence</a>
       <a href="/settings" class="nav-link">Settings</a>
     </nav>
     <div class="header-right">
@@ -121,14 +122,37 @@
       <span class="line"></span>
     </div>
 
-    <div class="card feature-heatmap-wrapper" style="grid-column: 1 / -1;">
-      <div class="card-title">HMM Feature Values per Coin</div>
-      <div class="feature-heatmap-scroll" id="featureHeatmapArea">
-        <div class="empty-state">
-          <div class="icon">🧠</div>
-          <p>Waiting for engine analysis cycle...</p>
+    <div class="card feature-heatmap-wrapper" style="grid-column: 1 / -1; overflow-x:auto;">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Regime Drivers — Feature Heatmap</span>
+        <div style="font-size:10px; color:var(--text-secondary); display:flex; gap:8px;">
+          <span><span style="color:#22C55E">●</span> bullish</span>
+          <span><span style="color:#EF4444">●</span> bearish</span>
+          <span><span style="color:#CBD5E1">●</span> neutral</span>
         </div>
       </div>
+      <table class="walls-table" id="regimeDriversTable" style="margin-top:8px; width:100%; border-collapse: collapse;">
+        <thead>
+          <tr style="color:var(--text-tertiary); border-bottom:1px solid #E2E8F0; text-align:left;">
+            <th style="padding:10px;">COIN</th>
+            <th style="padding:10px;">REGIME</th>
+            <th style="padding:10px;">CONF</th>
+            <th style="padding:10px;">LOGRET</th>
+            <th style="padding:10px;">VOL</th>
+            <th style="padding:10px;">VOLΔ</th>
+            <th style="padding:10px;">RSI</th>
+            <th style="padding:10px;">OI</th>
+            <th style="padding:10px;">FUND</th>
+            <th style="padding:10px; text-align:right;">ACTION</th>
+          </tr>
+        </thead>
+        <tbody id="regimeDriversBody">
+          <tr>
+            <td colspan="12" style="text-align:center; padding:20px; color:var(--text-secondary);">Waiting for data cycle...
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <!-- ─── Section: 50-Coin Heatmap ─── -->
