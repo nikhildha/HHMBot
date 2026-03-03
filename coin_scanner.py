@@ -22,6 +22,12 @@ logger = logging.getLogger("CoinScanner")
 # ─── Path for multi-coin state ──────────────────────────────────────────────────
 SCANNER_STATE_FILE = __import__("os").path.join(config.DATA_DIR, "scanner_state.json")
 
+# ─── Coins to exclude (no data, wrapped tokens, low liquidity) ───────────────
+COIN_EXCLUDE = {
+    "EURUSDT", "WBTCUSDT", "USDCUSDT", "TUSDUSDT", "BUSDUSDT",
+    "USTUSDT", "DAIUSDT", "FDUSDUSDT",
+}
+
 
 def _get_top_coins_binance(limit=50, quote="USDT"):
     """Fetch top coins from Binance by 24h quote volume (paper mode)."""
@@ -37,6 +43,7 @@ def _get_top_coins_binance(limit=50, quote="USDT"):
         t for t in tickers
         if t["symbol"].endswith(quote)
         and not any(kw in t["symbol"].replace(quote, "") for kw in exclude_keywords)
+        and t["symbol"] not in COIN_EXCLUDE
     ]
     usdt_tickers.sort(key=lambda t: float(t.get("quoteVolume", 0)), reverse=True)
     top_symbols = [t["symbol"] for t in usdt_tickers[:limit]]
@@ -71,6 +78,7 @@ def _get_top_coins_coindcx(limit=50):
     # Convert to Binance-style symbols and take top N
     top_pairs = scored[:limit]
     top_symbols = [cdx.from_coindcx_pair(pair) for pair, vol in top_pairs]
+    top_symbols = [s for s in top_symbols if s not in COIN_EXCLUDE]
 
     logger.info("CoinDCX: Top %d coins by volume (%d total instruments).", len(top_symbols), len(instruments))
     return top_symbols

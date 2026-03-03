@@ -129,7 +129,7 @@ def _load_finbert():
         )
         logger.info("FinBERT loaded.")
     except Exception as e:
-        logger.warning("FinBERT unavailable: %s  (VADER-only mode)", e)
+        logger.debug("FinBERT unavailable: %s  (VADER-only mode)", e)
         _finbert_pipeline = None
     return _finbert_pipeline
 
