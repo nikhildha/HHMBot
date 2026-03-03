@@ -162,9 +162,15 @@ app.get('/api/status', async (req, res) => {
             keyLast4 = keyMatch[1].slice(-4);
         }
 
-        // Check bot active status from a file or memory
-        const pauseFile = path.join(DATA_DIR, 'bot_pause.lock');
-        const botActive = !fs.existsSync(pauseFile);
+        // Check bot active status from engine_state.json (same file Python bot reads)
+        let botActive = true;
+        try {
+            const engineStatePath = path.join(DATA_DIR, 'engine_state.json');
+            if (fs.existsSync(engineStatePath)) {
+                const engineState = JSON.parse(fs.readFileSync(engineStatePath, 'utf8'));
+                botActive = engineState.status !== 'paused';
+            }
+        } catch (e) { /* default to active */ }
 
         // Fetch Balance & Latency via Python script (reusing fetch_positions.py or new one)
         // For now, we'll genericize fetch_positions to also return status
@@ -394,6 +400,34 @@ io.on('connection', (socket) => {
     if (logLines.length > 0) {
         socket.emit('log-init', logLines);
     }
+
+    // Toggle engine pause/resume from dashboard
+    socket.on('toggle-engine', (shouldRun) => {
+        console.log(`[Dashboard] Engine toggle: ${shouldRun ? 'RESUME' : 'PAUSE'} from ${socket.id}`);
+        const engineStatePath = path.join(DATA_DIR, 'engine_state.json');
+        try {
+            if (shouldRun) {
+                const resumeState = {
+                    status: 'running',
+                    resumed_at: new Date().toISOString(),
+                    paused_by: null
+                };
+                fs.writeFileSync(engineStatePath, JSON.stringify(resumeState, null, 2));
+                socket.emit('engine-status', { active: true, message: 'Engine resumed' });
+            } else {
+                const pauseState = {
+                    status: 'paused',
+                    paused_at: new Date().toISOString(),
+                    paused_by: 'dashboard'
+                };
+                fs.writeFileSync(engineStatePath, JSON.stringify(pauseState, null, 2));
+                socket.emit('engine-status', { active: false, message: 'Engine paused' });
+            }
+        } catch (e) {
+            console.error('[Dashboard] Failed to toggle engine:', e.message);
+            socket.emit('engine-status', { error: e.message });
+        }
+    });
 
     // Manual cycle trigger from dashboard
     socket.on('trigger-cycle', () => {
