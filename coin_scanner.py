@@ -25,7 +25,7 @@ SCANNER_STATE_FILE = __import__("os").path.join(config.DATA_DIR, "scanner_state.
 # ─── Coins to exclude (no data, wrapped tokens, low liquidity) ───────────────
 COIN_EXCLUDE = {
     "EURUSDT", "WBTCUSDT", "USDCUSDT", "TUSDUSDT", "BUSDUSDT",
-    "USTUSDT", "DAIUSDT", "FDUSDUSDT",
+    "USTUSDT", "DAIUSDT", "FDUSDUSDT", "CVCUSDT", "USD1USDT",
 }
 
 
