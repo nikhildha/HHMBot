@@ -433,6 +433,31 @@ function updatePnlTimelineChart(trades) {
 //  TRADE TABLE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ─── Indian Financial Year Helpers ──────────────────────────────────────────
+function getFYRange(fy) {
+    if (!fy || fy === 'ALL') return null;
+    // "FY2025-26" → startYear = 2025, range: 2025-04-01 to 2026-03-31
+    const startYear = parseInt(fy.slice(2, 6));
+    return {
+        start: new Date(startYear + '-04-01T00:00:00'),
+        end: new Date((startYear + 1) + '-03-31T23:59:59')
+    };
+}
+
+function updateFySummary(trades) {
+    const bar = document.getElementById('fySummaryBar');
+    const fyEl = document.getElementById('filterFY');
+    if (!bar || !fyEl) return;
+    const fy = fyEl.value;
+    if (fy === 'ALL') { bar.style.display = 'none'; return; }
+    const closed = trades.filter(t => t.status === 'CLOSED');
+    const netPnl = closed.reduce((s, t) => s + (parseFloat(t.realized_pnl) || 0), 0);
+    const wins = closed.filter(t => (parseFloat(t.realized_pnl) || 0) > 0).length;
+    const wr = closed.length ? ((wins / closed.length) * 100).toFixed(0) : 0;
+    bar.textContent = `${fy}: ${trades.length} trades | ${closed.length} closed | Net P&L: ${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(2)} | Win Rate: ${wr}%`;
+    bar.style.display = 'block';
+}
+
 function getFilteredTrades() {
     const status = document.getElementById('filterStatus').value;
     const position = document.getElementById('filterPosition').value;
@@ -462,6 +487,15 @@ function getFilteredTrades() {
     if (symbolSearch) trades = trades.filter(t =>
         (t.symbol || '').toUpperCase().includes(symbolSearch)
     );
+
+    // Indian Financial Year filter
+    const fyRange = getFYRange(document.getElementById('filterFY')?.value);
+    if (fyRange) {
+        trades = trades.filter(t => {
+            const d = new Date(t.entry_timestamp || t.created_at || 0);
+            return d >= fyRange.start && d <= fyRange.end;
+        });
+    }
 
     return trades;
 }
@@ -610,6 +644,7 @@ function renderTable(trades) {
 
 function applyFilters() {
     const filtered = getFilteredTrades();
+    updateFySummary(filtered);
     renderTable(filtered);
 }
 

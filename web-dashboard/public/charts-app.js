@@ -123,6 +123,34 @@ function selectCoin(symbol) {
     selectedSymbol = symbol;
     renderCoinList();
     loadChart(symbol, selectedTimeframe);
+    updateRegimeBanner(symbol);
+}
+
+// ─── Regime Banner ───────────────────────────────────────────────────────────
+function updateRegimeBanner(symbol) {
+    fetch('/api/multi-state')
+        .then(r => r.json())
+        .then(data => {
+            const states = data.coin_states || data.active_positions || {};
+            const coin = states[symbol] || states[symbol + 'USDT'];
+            const banner = document.getElementById('regimeBanner');
+            if (!banner) return;
+            const regime = (coin?.regime || 'UNKNOWN').toUpperCase();
+            const conf = coin?.confidence ? (coin.confidence * 100).toFixed(0) + '% confidence' : '';
+            const map = {
+                'BULLISH': 'bull',
+                'BEARISH': 'bear',
+                'SIDEWAYS/CHOP': 'chop',
+                'CRASH/PANIC': 'crash'
+            };
+            const cls = map[regime] || '';
+            banner.className = 'regime-banner' + (cls ? ' ' + cls : '');
+            banner.style.display = 'flex';
+            document.getElementById('regimeDot').className = 'regime-dot' + (cls ? ' ' + cls : '');
+            document.getElementById('regimeBannerText').textContent = regime + ' REGIME';
+            document.getElementById('regimeBannerConf').textContent = conf;
+        })
+        .catch(() => {});
 }
 
 // ─── Timeframe Selection ────────────────────────────────────────────────────

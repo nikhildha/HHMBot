@@ -210,17 +210,24 @@
                     <label>Symbol</label>
                     <input type="text" id="filterSymbol" placeholder="e.g. BTC" oninput="applyFilters()">
                 </div>
-                <button class="btn btn-sm" onclick="refreshData()" id="syncCdxBtn"
-                    style="background:linear-gradient(135deg,#0EA5E9,#3B82F6);color:#fff;display:none;">🔄 Sync
-                    CoinDCX</button>
+                <div class="filter-group">
+                    <label>Financial Year</label>
+                    <select id="filterFY" onchange="applyFilters()">
+                        <option value="ALL">All Time</option>
+                        <option value="FY2025-26" selected>FY 2025–26</option>
+                        <option value="FY2024-25">FY 2024–25</option>
+                        <option value="FY2023-24">FY 2023–24</option>
+                        <option value="FY2022-23">FY 2022–23</option>
+                    </select>
+                </div>
                 <button class="btn btn-refresh btn-sm" onclick="exportCSV()">Export CSV</button>
                 <button class="btn btn-sm" onclick="generatePdfReport()"
                     style="background:linear-gradient(135deg,#8B5CF6,#6D28D9);color:#fff;">Insights</button>
-                <button class="btn btn-danger btn-sm" onclick="closeSelectedTrades()" id="closeSelectedBtn"
-                    style="display:none;">Close Selected</button>
-                <span id="selectedCount" style="font-size:12px;color:#64748B;"></span>
                 <button class="btn btn-danger btn-sm" onclick="deleteAllTrades()">Delete</button>
             </div>
+
+            <!-- FY Summary Bar -->
+            <div id="fySummaryBar" class="fy-summary-bar" style="display:none;"></div>
 
             <!-- ─── Trade Table ─── -->
             <div class="positions-table-wrapper card tradebook-table-wrapper">

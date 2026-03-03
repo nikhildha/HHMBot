@@ -209,12 +209,22 @@ app.get('/api/status', async (req, res) => {
 
 app.post('/api/bot/toggle', (req, res) => {
     const { active } = req.body;
-    const pauseFile = path.join(DATA_DIR, 'bot_pause.lock');
+    const engineStatePath = path.join(DATA_DIR, 'engine_state.json');
     try {
         if (active) {
-            if (fs.existsSync(pauseFile)) fs.unlinkSync(pauseFile);
+            const resumeState = {
+                status: 'running',
+                resumed_at: new Date().toISOString(),
+                paused_by: null
+            };
+            fs.writeFileSync(engineStatePath, JSON.stringify(resumeState, null, 2));
         } else {
-            fs.writeFileSync(pauseFile, new Date().toISOString());
+            const pauseState = {
+                status: 'paused',
+                paused_at: new Date().toISOString(),
+                paused_by: 'dashboard'
+            };
+            fs.writeFileSync(engineStatePath, JSON.stringify(pauseState, null, 2));
         }
         res.json({ success: true, active });
     } catch (e) {

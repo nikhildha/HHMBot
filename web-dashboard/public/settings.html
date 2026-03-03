@@ -711,11 +711,31 @@
 
             window.toggleEngine = function () {
                 engineRunning = !engineRunning;
-                if (sock) sock.emit('toggle-engine', engineRunning);
                 updateEngineBtn();
+                // Use HTTP API (reliable on prod) + socket (fallback)
+                fetch('/api/bot/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ active: engineRunning })
+                }).then(r => r.json()).then(d => {
+                    if (d.success) {
+                        if (engineStatus) engineStatus.innerHTML = engineRunning
+                            ? '<span style="color:#22C55E;">● Engine Running</span>'
+                            : '<span style="color:#EF4444;">● Engine Paused</span>';
+                    }
+                }).catch(err => {
+                    console.error('Toggle failed:', err);
+                    if (engineStatus) engineStatus.innerHTML = '<span style="color:#EF4444;">⚠ Toggle failed</span>';
+                });
+                if (sock) sock.emit('toggle-engine', engineRunning);
             };
 
             window.triggerCycle = function () {
+                fetch('/api/bot/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ active: true })
+                }).catch(() => { });
                 if (sock) sock.emit('trigger-cycle');
                 if (engineStatus) {
                     engineStatus.innerHTML = '<span style="color:#3B82F6;">⚡ Cycle triggered!</span>';
