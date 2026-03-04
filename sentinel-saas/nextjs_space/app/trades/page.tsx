@@ -26,9 +26,17 @@ export default async function TradesPage() {
     redirect('/login');
   }
 
+  const userId = (session.user as any)?.id;
+  const isAdmin = (session.user as any)?.role === 'admin';
+
   // Read from local data/tradebook.json (engine writes here)
   const tradebook = readJSON('tradebook.json', { trades: [] });
-  const rawTrades: any[] = tradebook.trades || [];
+  const allTrades: any[] = tradebook.trades || [];
+
+  // Filter trades by user: admin sees all, regular users see only their trades
+  const rawTrades = isAdmin
+    ? allTrades
+    : allTrades.filter((t: any) => t.user_id === userId);
 
   return (
     <TradesClient
@@ -58,6 +66,7 @@ export default async function TradesPage() {
         entryTime: t.entry_time || t.entryTime || t.timestamp || new Date().toISOString(),
         exitTime: t.exit_time || t.exitTime || null,
         botName: 'Sentinel Marshal',
+        targetType: t.target_type || t.targetType || null,
       }))}
     />
   );

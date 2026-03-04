@@ -20,7 +20,8 @@ export function Header() {
   }
 
   const handleSignOut = async () => {
-    await signOut({ callbackUrl: '/' });
+    await signOut({ redirect: false });
+    window.location.href = '/login';
   };
 
   return (

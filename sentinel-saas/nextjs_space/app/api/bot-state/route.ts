@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -19,6 +21,11 @@ function readJSON(filename: string, fallback: any = {}) {
 
 export async function GET() {
     try {
+        // Get session to filter trades by user
+        const session = await getServerSession(authOptions);
+        const userId = (session?.user as any)?.id;
+        const isAdmin = (session?.user as any)?.role === 'admin';
+
         const multi = readJSON('multi_bot_state.json', {
             coin_states: {},
             last_analysis_time: null,
@@ -31,7 +38,19 @@ export async function GET() {
 
         // Build the response shape that the dashboard expects
         const coinStates = multi.coin_states || {};
-        const trades = tradebook.trades || [];
+        const allTrades = tradebook.trades || [];
+
+        // Filter trades by user: admin sees all, regular users see only their trades
+        // Safety: if no userId resolved, return empty trades (don't leak data)
+        let trades: any[];
+        if (isAdmin) {
+            trades = allTrades;
+        } else if (userId) {
+            trades = allTrades.filter((t: any) => t.user_id === userId);
+        } else {
+            trades = []; // No session or userId → empty
+        }
+
         const activeTrades = trades.filter((t: any) => (t.status || '').toUpperCase() === 'ACTIVE');
 
         return NextResponse.json({
@@ -71,3 +90,4 @@ export async function GET() {
         });
     }
 }
+
