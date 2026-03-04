@@ -7,7 +7,7 @@ import json
 import os
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import config
 from hmm_brain import HMMBrain
@@ -130,15 +130,15 @@ class RegimeMasterBot:
                     if halt_until:
                         try:
                             halt_dt = datetime.fromisoformat(halt_until.replace("Z", "+00:00")).replace(tzinfo=None)
-                            if datetime.utcnow() >= halt_dt:
+                            if datetime.now(timezone.utc).replace(tzinfo=None) >= halt_dt:
                                 # Auto-resume: halt period expired
-                                resume_state = {"status": "running", "resumed_at": datetime.utcnow().isoformat() + "Z", "paused_by": None}
+                                resume_state = {"status": "running", "resumed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z", "paused_by": None}
                                 with open(state_path, "w") as fw:
                                     json.dump(resume_state, fw, indent=2)
                                 logger.info("✅ Auto-halt expired — engine RESUMED automatically")
                                 self._pause_logged = False
                             else:
-                                remaining = (halt_dt - datetime.utcnow()).total_seconds() / 60
+                                remaining = (halt_dt - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 60
                                 if not getattr(self, '_pause_logged', False):
                                     reason = state.get("reason", "Auto-halted")
                                     logger.warning("⏸️  Engine HALTED: %s (%.0f min remaining)", reason, remaining)
@@ -221,9 +221,9 @@ class RegimeMasterBot:
             if os.path.exists(config.MULTI_STATE_FILE):
                 with open(config.MULTI_STATE_FILE, "r") as f:
                     multi = json.load(f)
-            multi["last_analysis_time"] = datetime.utcnow().isoformat() + "Z"
+            multi["last_analysis_time"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
             nxt = self._last_analysis_time + config.ANALYSIS_INTERVAL_SECONDS
-            multi["next_analysis_time"] = datetime.utcfromtimestamp(nxt).isoformat() + "Z"
+            multi["next_analysis_time"] = datetime.fromtimestamp(nxt, tz=timezone.utc).replace(tzinfo=None).isoformat() + "Z"
             multi["analysis_interval_seconds"] = config.ANALYSIS_INTERVAL_SECONDS
             with open(config.MULTI_STATE_FILE, "w") as f:
                 json.dump(multi, f, indent=2)
@@ -304,11 +304,11 @@ class RegimeMasterBot:
                 try:
                     import json
                     from datetime import timedelta
-                    halt_until = (datetime.utcnow() + timedelta(hours=1)).isoformat() + "Z"
+                    halt_until = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)).isoformat() + "Z"
                     state_path = os.path.join(os.path.dirname(__file__), "data", "engine_state.json")
                     halt_state = {
                         "status": "paused",
-                        "paused_at": datetime.utcnow().isoformat() + "Z",
+                        "paused_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
                         "paused_by": "auto_25_cap",
                         "halt_until": halt_until,
                         "reason": f"25 active positions reached — auto-halted for 1 hour until {halt_until}",
@@ -330,7 +330,7 @@ class RegimeMasterBot:
             from datetime import datetime as _dt
             try:
                 last_loss_time = _dt.fromisoformat(last_loss_ts.replace("Z", "+00:00"))
-                elapsed = (datetime.utcnow() - last_loss_time.replace(tzinfo=None)).total_seconds() / 60
+                elapsed = (datetime.now(timezone.utc).replace(tzinfo=None) - last_loss_time.replace(tzinfo=None)).total_seconds() / 60
                 if elapsed < COOLDOWN_MINUTES:
                     remaining = COOLDOWN_MINUTES - elapsed
                     logger.warning(
@@ -410,7 +410,7 @@ class RegimeMasterBot:
                 "regime": trade["regime_name"],
                 "confidence": trade["confidence"],
                 "side": trade["side"],
-                "entry_time": datetime.utcnow().isoformat(),
+                "entry_time": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "leverage": fill_lev,
                 "entry_price": entry_price,
                 "quantity": fill_qty,
@@ -976,7 +976,7 @@ class RegimeMasterBot:
                 "regime": "BEARISH" if pos["side"] == "SELL" else "BULLISH",
                 "confidence": 0.99,
                 "side": pos["side"],
-                "entry_time": datetime.utcnow().isoformat(),
+                "entry_time": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "leverage": pos["leverage"],
                 "entry_price": pos["avg_price"],
                 "quantity": abs(pos["active_pos"]),
@@ -1020,7 +1020,7 @@ class RegimeMasterBot:
                     "leverage": t.get("leverage", 1),
                 }
             multi_state = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "cycle": getattr(self, "_cycle_count", 0),
                 "coins_scanned": len(cdx_active),
                 "eligible_count": len(cdx_active),
@@ -1080,7 +1080,7 @@ class RegimeMasterBot:
         # Also save legacy single-coin state (backward compat)
         top_coin = self._coin_states.get(config.PRIMARY_SYMBOL, {})
         legacy_state = {
-            "timestamp":    datetime.utcnow().isoformat(),
+            "timestamp":    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "symbol":       config.PRIMARY_SYMBOL,
             "regime":       top_coin.get("regime", "SCANNING"),
             "confidence":   top_coin.get("confidence", 0),
@@ -1096,7 +1096,7 @@ class RegimeMasterBot:
 
         # Multi-coin state
         multi_state = {
-            "timestamp":        datetime.utcnow().isoformat(),
+            "timestamp":        datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "cycle":            self._cycle_count,
             "coins_scanned":    len(symbols_scanned),
             "eligible_count":   len(eligible),
