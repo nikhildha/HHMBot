@@ -2,7 +2,7 @@
 Project Regime-Master — Execution Engine
 Handles futures order placement with protective SL/TP orders.
   • Paper mode → Binance testnet (simulated)
-  • Live mode  → CoinDCX Futures (real orders)
+  • Live mode  → CoinDCX or Binance Futures (real orders)
 """
 import logging
 import csv
@@ -13,6 +13,30 @@ import config
 from risk_manager import RiskManager
 
 logger = logging.getLogger("ExecutionEngine")
+
+# ─── Exchange Client Factory ─────────────────────────────────────────────────────
+
+_live_exchange_client = None
+
+def get_exchange_client():
+    """Get the live exchange client based on EXCHANGE_LIVE config."""
+    global _live_exchange_client
+    if _live_exchange_client is not None:
+        return _live_exchange_client
+
+    exchange = getattr(config, 'EXCHANGE_LIVE', '').lower()
+    if exchange == 'binance':
+        from binance_futures_client import BinanceFuturesClient
+        testnet = getattr(config, 'BINANCE_FUTURES_TESTNET', True)
+        _live_exchange_client = BinanceFuturesClient(testnet=testnet)
+    elif exchange == 'coindcx':
+        from coindcx_exchange_client import CoinDCXExchangeClient
+        _live_exchange_client = CoinDCXExchangeClient()
+    else:
+        logger.warning("No EXCHANGE_LIVE set — live trading disabled.")
+        return None
+
+    return _live_exchange_client
 
 
 class ExecutionEngine:
@@ -122,10 +146,92 @@ class ExecutionEngine:
             )
             return log_entry
 
-        # ── Live Trade (CoinDCX Futures) ──────────────────────────
+        # ── Live Trade ──────────────────────────────────────────────
+        exchange = getattr(config, 'EXCHANGE_LIVE', '').lower()
+        if exchange == 'binance':
+            return self._execute_binance_live(symbol, side, leverage, quantity, atr,
+                                              regime, regime_name, confidence, reason)
+        # Default to CoinDCX
         return self._execute_coindcx(symbol, side, leverage, quantity, atr,
                                      regime, regime_name, confidence, reason)
 
+    def _execute_binance_live(self, symbol, side, leverage, quantity, atr,
+                               regime, regime_name, confidence, reason):
+        """Execute a live trade on Binance Futures."""
+        client = get_exchange_client()
+        if not client:
+            logger.error("No exchange client available for Binance live trade.")
+            return None
+
+        from data_pipeline import get_current_price
+        price = get_current_price(symbol) or 0
+        sl, tp = self.risk.calculate_atr_stops(price, atr, side)
+
+        result = client.open_position(
+            symbol=symbol, side=side, quantity=quantity,
+            leverage=leverage, sl_price=sl, tp_price=tp,
+        )
+
+        if result.get("status") == "FILLED":
+            fill_price = result.get("avg_price", price)
+            fill_qty = result.get("filled_qty", quantity)
+            margin = fill_qty * fill_price / leverage
+
+            log_entry = {
+                "timestamp":    datetime.utcnow().isoformat(),
+                "symbol":       symbol,
+                "side":         side,
+                "leverage":     leverage,
+                "quantity":     fill_qty,
+                "entry_price":  fill_price,
+                "stop_loss":    sl,
+                "take_profit":  tp,
+                "capital":      round(margin, 2),
+                "regime":       regime_name,
+                "confidence":   confidence if confidence else 0,
+                "reason":       reason,
+                "mode":         "LIVE-BINANCE",
+                "exchange":     "binance",
+                "order_id":     result.get("order_id"),
+            }
+            self._log_trade(log_entry)
+            logger.info(
+                "✅ Binance %s %s @ %.4f | %dx | qty=%.6f | SL=%.4f TP=%.4f",
+                side, symbol, fill_price, leverage, fill_qty, sl, tp,
+            )
+            return log_entry
+        else:
+            logger.error("❌ Binance trade failed for %s: %s", symbol, result.get("error"))
+            return None
+
+    # ─── Multi-Target Live Trading Methods ────────────────────────────────────
+
+    @staticmethod
+    def partial_close_live(symbol, side, quantity):
+        """Partially close a live position (for T1/T2 bookings)."""
+        client = get_exchange_client()
+        if not client:
+            logger.warning("No exchange client — cannot partial close %s", symbol)
+            return None
+        return client.partial_close(symbol, side, quantity)
+
+    @staticmethod
+    def modify_sl_live(symbol, new_sl_price):
+        """Modify SL on exchange (for breakeven / T1 moves)."""
+        client = get_exchange_client()
+        if not client:
+            logger.warning("No exchange client — cannot modify SL for %s", symbol)
+            return False
+        return client.modify_sl(symbol, new_sl_price)
+
+    @staticmethod
+    def close_position_live(symbol):
+        """Fully close a live position (for T3 or MAX_LOSS)."""
+        client = get_exchange_client()
+        if not client:
+            logger.warning("No exchange client — cannot close %s", symbol)
+            return False
+        return client.close_position(symbol)
     # ─── CoinDCX helpers ──────────────────────────────────────────────────────
 
     @staticmethod

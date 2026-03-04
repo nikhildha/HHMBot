@@ -217,6 +217,53 @@ def compute_support_resistance(df, n_swing=3, max_levels=3):
     }
 
 
+def compute_vwap(df, window=20):
+    """
+    Compute rolling VWAP (Volume Weighted Average Price).
+    
+    Returns pd.Series of VWAP values.
+    """
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    cum_tp_vol = (typical * df["volume"]).rolling(window).sum()
+    cum_vol = df["volume"].rolling(window).sum()
+    return cum_tp_vol / cum_vol.replace(0, np.nan)
+
+
+def compute_sr_position(df, lookback=50):
+    """
+    Compute SR position (0-1) and VWAP position for conviction scoring.
+
+    sr_position: 0 = at support (ideal for BUY), 1 = at resistance (ideal for SELL)
+    vwap_position: >0 = above VWAP (bullish), <0 = below (bearish)
+
+    Returns (sr_position: float, vwap_position: float)
+    """
+    if len(df) < lookback:
+        return None, None
+
+    window = df.iloc[-lookback:]
+    close = float(df["close"].iloc[-1])
+    recent_high = float(window["high"].max())
+    recent_low = float(window["low"].min())
+
+    # SR position: where is price in the recent range?
+    if recent_high == recent_low:
+        sr_pos = 0.5
+    else:
+        sr_pos = (close - recent_low) / (recent_high - recent_low)
+    sr_pos = max(0.0, min(1.0, sr_pos))
+
+    # VWAP position
+    vwap = compute_vwap(df, window=min(20, len(df)))
+    last_vwap = vwap.iloc[-1]
+    if pd.isna(last_vwap) or last_vwap == 0:
+        vwap_pos = None
+    else:
+        vwap_pos = (close - last_vwap) / last_vwap  # % above/below VWAP
+
+    return sr_pos, vwap_pos
+
+
 def compute_all_features(df):
     """
     Convenience: computes BOTH HMM features AND technical indicators.

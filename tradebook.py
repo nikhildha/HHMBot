@@ -84,7 +84,7 @@ def _compute_summary(book):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def open_trade(symbol, side, leverage, quantity, entry_price, atr,
-               regime, confidence, reason="", capital=100.0, mode=None):
+               regime, confidence, reason="", capital=100.0, mode=None, user_id=None):
     """
     Record a new trade entry in the tradebook.
 
@@ -189,6 +189,7 @@ def open_trade(symbol, side, leverage, quantity, entry_price, atr,
         "max_adverse":      0,
         "duration_minutes":  0,
         "mode":             mode if mode else ("PAPER" if config.PAPER_TRADE else "LIVE"),
+        "user_id":          user_id,
         "commission":       0,
         "funding_cost":     0,
         "funding_payments": 0,
@@ -366,6 +367,7 @@ def _book_partial_inline(trade, book, exit_price, qty_frac, reason):
         "max_adverse":      0,
         "duration_minutes":  round(duration, 1),
         "mode":             trade.get("mode", "PAPER"),
+        "user_id":          trade.get("user_id"),
         "commission":       commission,
         "funding_cost":     0,
         "funding_payments": 0,
@@ -565,7 +567,7 @@ def update_unrealized(prices=None, funding_rates=None):
         # When leveraged P&L ≥ 10%, move SL to lock in +4% LEVERAGED profit
         # Formula: lock_price = lock_pct / (100 × leverage)
         # At 35x: 4%/35 = 0.114% price move = 4% leveraged return
-        if pnl_pct >= config.CAPITAL_PROTECT_TRIGGER_PCT:
+        if config.CAPITAL_PROTECT_ENABLED and pnl_pct >= config.CAPITAL_PROTECT_TRIGGER_PCT:
             if not trade.get("capital_protection_active"):
                 lev = trade["leverage"]
                 lock_price_pct = config.CAPITAL_PROTECT_LOCK_PCT / (100 * lev)
@@ -658,71 +660,89 @@ def update_unrealized(prices=None, funding_rates=None):
         # for paper trades.
         is_live = trade.get("mode") == "LIVE"
 
+        # HARD MAX LOSS GUARD (paper + live safety net)
+        max_loss_limit = config.MAX_LOSS_PER_TRADE_PCT
+        if pnl_pct <= max_loss_limit:
+            logger.warning(
+                "🛑 MAX LOSS hit on %s (%.2f%% <= %.0f%%) — auto-closing trade %s",
+                symbol, pnl_pct, max_loss_limit, trade["trade_id"],
+            )
+            if is_live:
+                from execution_engine import ExecutionEngine
+                ExecutionEngine.close_position_live(symbol)
+            _close_trade_inline(trade, current, f"MAX_LOSS_{int(max_loss_limit)}%")
+            changed = True
+            continue
+
+        # ── MULTI-TARGET EXIT CHECKS (paper + live) ──
+        mt_enabled = getattr(config, 'MULTI_TARGET_ENABLED', False)
+        t1_price = trade.get("t1_price")
+        t2_price = trade.get("t2_price")
+        t3_price = trade.get("t3_price")
+
+        if mt_enabled and t1_price is not None:
+            # Initialize fields for legacy trades
+            if "t1_hit" not in trade:
+                trade["t1_hit"] = False
+            if "t2_hit" not in trade:
+                trade["t2_hit"] = False
+            if "original_qty" not in trade:
+                trade["original_qty"] = trade["quantity"]
+            if "original_capital" not in trade:
+                trade["original_capital"] = trade["capital"]
+
+            # T1 check
+            if not trade["t1_hit"]:
+                t1_hit = (is_long and current >= t1_price) or (not is_long and current <= t1_price)
+                if t1_hit:
+                    book_frac = config.MT_T1_BOOK_PCT  # 25%
+                    # Live: partial close on exchange
+                    if is_live:
+                        from execution_engine import ExecutionEngine
+                        close_qty = trade["quantity"] * book_frac
+                        ExecutionEngine.partial_close_live(symbol, trade["position"], close_qty)
+                        ExecutionEngine.modify_sl_live(symbol, trade["entry_price"])
+                    _book_partial_inline(trade, book, current, book_frac, "T1")
+                    trade["t1_hit"] = True
+                    trade["trailing_sl"] = trade["entry_price"]  # SL → breakeven
+                    trade["trailing_active"] = True
+                    logger.info("🎯 T1 hit on %s — booked 25%%, SL → breakeven (%.6f)",
+                                trade["trade_id"], trade["entry_price"])
+                    changed = True
+
+            # T2 check
+            if trade["t1_hit"] and not trade["t2_hit"]:
+                t2_hit = (is_long and current >= t2_price) or (not is_long and current <= t2_price)
+                if t2_hit:
+                    book_frac = config.MT_T2_BOOK_PCT  # 50% of remaining
+                    # Live: partial close on exchange
+                    if is_live:
+                        from execution_engine import ExecutionEngine
+                        close_qty = trade["quantity"] * book_frac
+                        ExecutionEngine.partial_close_live(symbol, trade["position"], close_qty)
+                        ExecutionEngine.modify_sl_live(symbol, t1_price)
+                    _book_partial_inline(trade, book, current, book_frac, "T2")
+                    trade["t2_hit"] = True
+                    trade["trailing_sl"] = t1_price  # SL → T1
+                    logger.info("🎯 T2 hit on %s — booked 50%% remaining, SL → T1 (%.6f)",
+                                trade["trade_id"], t1_price)
+                    changed = True
+
+            # T3 check (close everything remaining)
+            if trade["t2_hit"]:
+                t3_hit = (is_long and current >= t3_price) or (not is_long and current <= t3_price)
+                if t3_hit:
+                    logger.info("🏆 T3 hit on %s — closing remaining position",
+                                trade["trade_id"])
+                    if is_live:
+                        from execution_engine import ExecutionEngine
+                        ExecutionEngine.close_position_live(symbol)
+                    _close_trade_inline(trade, current, "T3")
+                    changed = True
+                    continue
+
+        # Use trailing values for SL hit checks (paper only — live SL handled by exchange)
         if not is_live:
-            # HARD MAX LOSS GUARD — paper trades only (flat -15%)
-            max_loss_limit = config.MAX_LOSS_PER_TRADE_PCT
-            if pnl_pct <= max_loss_limit:
-                logger.warning(
-                    "🛑 MAX LOSS hit on %s (%.2f%% <= %.0f%%) — auto-closing trade %s",
-                    symbol, pnl_pct, max_loss_limit, trade["trade_id"],
-                )
-                _close_trade_inline(trade, current, f"MAX_LOSS_{int(max_loss_limit)}%")
-                changed = True
-                continue
-
-            # ── MULTI-TARGET EXIT CHECKS ──
-            mt_enabled = getattr(config, 'MULTI_TARGET_ENABLED', False)
-            t1_price = trade.get("t1_price")
-            t2_price = trade.get("t2_price")
-            t3_price = trade.get("t3_price")
-
-            if mt_enabled and t1_price is not None:
-                # Initialize fields for legacy trades
-                if "t1_hit" not in trade:
-                    trade["t1_hit"] = False
-                if "t2_hit" not in trade:
-                    trade["t2_hit"] = False
-                if "original_qty" not in trade:
-                    trade["original_qty"] = trade["quantity"]
-                if "original_capital" not in trade:
-                    trade["original_capital"] = trade["capital"]
-
-                # T1 check
-                if not trade["t1_hit"]:
-                    t1_hit = (is_long and current >= t1_price) or (not is_long and current <= t1_price)
-                    if t1_hit:
-                        book_frac = config.MT_T1_BOOK_PCT  # 25%
-                        _book_partial_inline(trade, book, current, book_frac, "T1")
-                        trade["t1_hit"] = True
-                        trade["trailing_sl"] = trade["entry_price"]  # SL → breakeven
-                        trade["trailing_active"] = True
-                        logger.info("🎯 T1 hit on %s — booked 25%%, SL → breakeven (%.6f)",
-                                    trade["trade_id"], trade["entry_price"])
-                        changed = True
-
-                # T2 check
-                if trade["t1_hit"] and not trade["t2_hit"]:
-                    t2_hit = (is_long and current >= t2_price) or (not is_long and current <= t2_price)
-                    if t2_hit:
-                        book_frac = config.MT_T2_BOOK_PCT  # 50% of remaining
-                        _book_partial_inline(trade, book, current, book_frac, "T2")
-                        trade["t2_hit"] = True
-                        trade["trailing_sl"] = t1_price  # SL → T1
-                        logger.info("🎯 T2 hit on %s — booked 50%% remaining, SL → T1 (%.6f)",
-                                    trade["trade_id"], t1_price)
-                        changed = True
-
-                # T3 check (close everything remaining)
-                if trade["t2_hit"]:
-                    t3_hit = (is_long and current >= t3_price) or (not is_long and current <= t3_price)
-                    if t3_hit:
-                        logger.info("🏆 T3 hit on %s — closing remaining position",
-                                    trade["trade_id"])
-                        _close_trade_inline(trade, current, "T3")
-                        changed = True
-                        continue
-
-            # Use trailing values for SL hit checks
             effective_sl = trade.get("trailing_sl", trade["stop_loss"])
 
             sl_hit = False

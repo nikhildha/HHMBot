@@ -450,6 +450,101 @@ def get_usdt_balance():
     return 0.0
 
 
+# ─── Partial Close & SL Modification (Multi-Target) ──────────────────────────────
+
+def partial_close_position(pair, side, quantity):
+    """
+    Partially close a position by placing a reduce-only opposite-side market order.
+
+    Parameters
+    ----------
+    pair : str — CoinDCX pair (B-BTC_USDT)
+    side : str — original position side ('buy' or 'sell')
+    quantity : float — quantity to close
+
+    Returns
+    -------
+    dict — API response with order result
+    """
+    close_side = "sell" if side.lower() == "buy" else "buy"
+
+    order = {
+        "side": close_side,
+        "pair": pair,
+        "order_type": "market_order",
+        "total_quantity": quantity,
+        "reduce_only": True,
+        "notification": "no_notification",
+        "hidden": False,
+        "post_only": False,
+    }
+    body = {"order": order}
+
+    logger.info(
+        "CoinDCX PARTIAL CLOSE: %s %s qty=%.6f (reduce-only)",
+        close_side, pair, quantity,
+    )
+    return _private_post(f"{FUTURES_PREFIX}/orders/create", body)
+
+
+def modify_stop_loss(position_id, new_sl_price):
+    """
+    Modify the stop-loss price for an existing position.
+
+    Used after target hits:
+      T1 hit → SL moves to breakeven (entry price)
+      T2 hit → SL moves to T1 price
+
+    Parameters
+    ----------
+    position_id : str — CoinDCX position ID
+    new_sl_price : float — new stop loss trigger price
+
+    Returns
+    -------
+    dict — API response
+    """
+    body = {
+        "id": position_id,
+        "stop_loss": {
+            "stop_price": str(new_sl_price),
+            "order_type": "stop_market",
+        },
+    }
+    logger.info(
+        "CoinDCX MODIFY SL: position %s → SL=%.6f",
+        position_id, new_sl_price,
+    )
+    return _private_post(f"{FUTURES_PREFIX}/positions/create_tpsl", body)
+
+
+def modify_take_profit(position_id, new_tp_price):
+    """
+    Modify the take-profit price for an existing position.
+
+    Parameters
+    ----------
+    position_id : str — CoinDCX position ID
+    new_tp_price : float — new take profit trigger price
+
+    Returns
+    -------
+    dict — API response
+    """
+    body = {
+        "id": position_id,
+        "take_profit": {
+            "stop_price": str(new_tp_price),
+            "order_type": "take_profit_market",
+        },
+    }
+    logger.info(
+        "CoinDCX MODIFY TP: position %s → TP=%.6f",
+        position_id, new_tp_price,
+    )
+    return _private_post(f"{FUTURES_PREFIX}/positions/create_tpsl", body)
+
+
 # ─── CLI Test ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

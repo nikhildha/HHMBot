@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from data_pipeline import fetch_klines
-from feature_engine import compute_all_features, compute_hmm_features
+from feature_engine import compute_all_features, compute_hmm_features, compute_sr_position
 from hmm_brain import HMMBrain
 from coin_scanner import get_top_coins_by_volume
 from risk_manager import RiskManager
@@ -32,6 +32,7 @@ logger.setLevel(logging.INFO)
 BT_INITIAL_BALANCE = 10000.0  # Starting paper balance
 BT_CAPITAL_PER_TRADE = 100.0  # Per-trade allocation
 BT_TIMEFRAME = "1h"           # Primary analysis timeframe
+BT_EXEC_TF = "15m"            # Execution timeframe (entry timing)
 BT_MACRO_TF = "4h"            # Macro confirmation timeframe
 BT_LOOKBACK = 500             # Candles to fetch
 BT_TRAIN_PERIOD = 200         # First N candles used for HMM training
@@ -71,6 +72,7 @@ class SimTrade:
         self.trailing_tp = self.tp
         self.peak_price = entry_price
         self.trailing_active = False
+        self.capital_protection_active = False
         self.tp_extensions = 0
         self.commission = 0.0
 
@@ -79,11 +81,53 @@ class SimTrade:
         is_long = self.side == "BUY"
         atr = self.atr
 
+        # ── HARD MAX LOSS GUARD (mirrors tradebook.py) ──
+        # Leverage-tiered: -30% at 20x+, -20% at 15x, -15% otherwise
+        if is_long:
+            current_pnl_pct = ((low - self.entry_price) / self.entry_price) * 100 * self.leverage
+        else:
+            current_pnl_pct = ((self.entry_price - high) / self.entry_price) * 100 * self.leverage
+        max_loss_limit = config.MAX_LOSS_PER_TRADE_PCT
+        if current_pnl_pct <= max_loss_limit:
+            # Calculate exit price at exact max loss level
+            price_move_pct = max_loss_limit / (100 * self.leverage)
+            if is_long:
+                exit_px = self.entry_price * (1 + price_move_pct)
+            else:
+                exit_px = self.entry_price * (1 - price_move_pct)
+            self._close(exit_px, idx, f"MAX_LOSS_{int(max_loss_limit)}%")
+            return True
+
         # ── Update peak price (high-water mark) ──
         if is_long:
             self.peak_price = max(self.peak_price, high)
         else:
             self.peak_price = min(self.peak_price, low)
+
+        # ── Capital Protection (4% Profit Lock) ──
+        # When leveraged P&L reaches ≥10%, move SL to lock in +4% LEVERAGED profit
+        # Formula: protect_sl = entry × (1 + lock_pct / (100 × leverage))
+        # At 35x: 4%/35 = 0.114% price move = 4% leveraged return
+        if not self.capital_protection_active:
+            if is_long:
+                pnl_pct = ((close - self.entry_price) / self.entry_price) * 100 * self.leverage
+            else:
+                pnl_pct = ((self.entry_price - close) / self.entry_price) * 100 * self.leverage
+            if pnl_pct >= config.CAPITAL_PROTECT_TRIGGER_PCT:
+                lock_price_pct = config.CAPITAL_PROTECT_LOCK_PCT / (100 * self.leverage)
+                if is_long:
+                    protect_sl = self.entry_price * (1 + lock_price_pct)
+                else:
+                    protect_sl = self.entry_price * (1 - lock_price_pct)
+                # Only tighten, never loosen
+                if is_long and protect_sl > self.trailing_sl:
+                    self.trailing_sl = protect_sl
+                    self.capital_protection_active = True
+                    self.trailing_active = True
+                elif not is_long and protect_sl < self.trailing_sl:
+                    self.trailing_sl = protect_sl
+                    self.capital_protection_active = True
+                    self.trailing_active = True
 
         # ── Trailing Stop Loss ──
         if config.TRAILING_SL_ENABLED and atr > 0:
@@ -132,7 +176,12 @@ class SimTrade:
 
         if is_long:
             if low <= effective_sl:
-                reason = "TRAILING_SL" if self.trailing_active else "STOP_LOSS"
+                if self.capital_protection_active:
+                    reason = "CAPITAL_PROTECT_SL"
+                elif self.trailing_active:
+                    reason = "TRAILING_SL"
+                else:
+                    reason = "STOP_LOSS"
                 self._close(effective_sl, idx, reason)
                 return True
             if high >= effective_tp:
@@ -141,7 +190,12 @@ class SimTrade:
                 return True
         else:
             if high >= effective_sl:
-                reason = "TRAILING_SL" if self.trailing_active else "STOP_LOSS"
+                if self.capital_protection_active:
+                    reason = "CAPITAL_PROTECT_SL"
+                elif self.trailing_active:
+                    reason = "TRAILING_SL"
+                else:
+                    reason = "STOP_LOSS"
                 self._close(effective_sl, idx, reason)
                 return True
             if low <= effective_tp:
@@ -172,7 +226,7 @@ class SimTrade:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  BACKTEST ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
-def backtest_coin(symbol):
+def backtest_coin(symbol, btc_macro_regimes=None):
     """Run backtest on a single coin. Returns list of closed trades."""
     # Fetch data
     df_1h = fetch_klines(symbol, BT_TIMEFRAME, limit=BT_LOOKBACK)
@@ -202,6 +256,17 @@ def backtest_coin(symbol):
         macro_brain = HMMBrain()
         macro_brain.train(df_4h_hmm.iloc[:min(BT_TRAIN_PERIOD, len(df_4h_hmm))])
         df_4h_feat = df_4h_feat_full
+
+    # Fetch + train 15m execution brain
+    exec_brain = None
+    df_15m_feat = None
+    df_15m = fetch_klines(symbol, BT_EXEC_TF, limit=BT_LOOKBACK * 4)  # 4x candles
+    if df_15m is not None and len(df_15m) >= BT_TRAIN_PERIOD:
+        df_15m_feat_full = compute_all_features(df_15m)
+        df_15m_hmm = compute_hmm_features(df_15m)
+        exec_brain = HMMBrain()
+        exec_brain.train(df_15m_hmm.iloc[:min(BT_TRAIN_PERIOD * 2, len(df_15m_hmm))])
+        df_15m_feat = df_15m_feat_full
 
     # Walk forward through test period
     trades = []
@@ -252,23 +317,38 @@ def backtest_coin(symbol):
             except Exception:
                 pass
 
+        # 15m execution confirmation
+        if exec_brain and exec_brain.is_trained and df_15m_feat is not None:
+            try:
+                # Map 1h index to approximate 15m index (each 1h = 4 x 15m)
+                exec_idx = min(i * 4 + 3, len(df_15m_feat) - 1)
+                exec_window = df_15m_feat.iloc[:exec_idx+1]
+                if len(exec_window) > 10:
+                    exec_regime, _ = exec_brain.predict(exec_window)
+                    exec_regime_name = exec_brain.get_regime_name(exec_regime)
+
+                    # Conflict filter: 15m must not contradict 1h
+                    if regime_name == "BULLISH" and exec_regime_name == "BEARISH":
+                        continue
+                    if regime_name == "BEARISH" and exec_regime_name == "BULLISH":
+                        continue
+                    if exec_regime_name == "CRASH":
+                        continue
+            except Exception:
+                pass
+
         # Get ATR
         atr = float(row["atr"]) if "atr" in df_feat.columns else 0
         if atr <= 0:
             continue
 
         # Volatility band filter: skip if coin is too dead or too wild
+        vol_ratio = atr / close
         if config.VOL_FILTER_ENABLED:
-            vol_ratio = atr / close
             if vol_ratio < config.VOL_MIN_ATR_PCT:
                 continue  # Too dead — no edge
             if vol_ratio > config.VOL_MAX_ATR_PCT:
                 continue  # Too wild — high SL hit rate
-
-        # Determine leverage
-        leverage = RiskManager.get_dynamic_leverage(conf, regime)
-        if leverage == 0:
-            continue
 
         # Determine side
         if regime == config.REGIME_BULL:
@@ -276,15 +356,40 @@ def backtest_coin(symbol):
         elif regime == config.REGIME_BEAR:
             side = "SELL"
         elif regime == config.REGIME_CHOP:
-            # Simple mean reversion: if RSI > 70 sell, RSI < 30 buy
-            rsi = float(row.get("rsi", 50))
-            if rsi > 70:
-                side = "SELL"
-            elif rsi < 30:
-                side = "BUY"
-            else:
-                continue
+            continue  # Skip choppy regime entirely
         else:
+            continue
+
+        # ── Conviction Scoring (8 factors) ──────────────────────
+        # 1. Get BTC macro regime at this candle
+        btc_regime = None
+        if btc_macro_regimes is not None and i < len(btc_macro_regimes):
+            btc_regime = int(btc_macro_regimes.iloc[i])
+
+        # 2. Compute S/R + VWAP position
+        sr_pos, vwap_pos = compute_sr_position(df_feat.iloc[:i+1], lookback=50)
+
+        # 3. Volatility quality (already computed as vol_ratio = atr/close)
+        vol_quality = vol_ratio
+
+        # 4. Compute conviction score
+        conviction = RiskManager.compute_conviction_score(
+            confidence=conf,
+            regime=regime,
+            side=side,
+            btc_regime=btc_regime,
+            funding_rate=None,       # Not available in spot klines
+            sr_position=sr_pos,
+            vwap_position=vwap_pos,
+            oi_change=None,          # Not available in spot klines
+            volatility=vol_quality,
+            sentiment_score=None,    # No historical sentiment
+            orderflow_score=None,    # No historical L2 data
+        )
+
+        # 5. Map conviction to leverage (< 40 = no trade)
+        leverage = RiskManager.get_conviction_leverage(conviction)
+        if leverage <= 0:
             continue
 
         # Open trade
@@ -378,16 +483,42 @@ def run_backtest(server_mode=False, coin_limit=50):
         logger.info("  Strategy: HMM Regime + Multi-TF (1h + 4h) + ATR SL/TP")
         logger.info("=" * 70)
 
+    # ── Pre-compute BTC macro regime (shared across all coins) ──
+    if not server_mode:
+        logger.info("\n📡 Pre-computing BTC macro regime...")
+    else:
+        emit({"type": "progress", "pct": 2, "label": "Computing BTC macro regime...", "log": "📡 Pre-computing BTC macro regime..."})
+
+    btc_macro_regimes = None
+    try:
+        df_btc = fetch_klines("BTCUSDT", BT_TIMEFRAME, limit=BT_LOOKBACK)
+        if df_btc is not None and len(df_btc) >= 200:
+            df_btc_hmm = compute_hmm_features(df_btc)
+            btc_brain = HMMBrain()
+            btc_brain.train(df_btc_hmm.iloc[:BT_TRAIN_PERIOD])
+            if btc_brain.is_trained:
+                import pandas as pd
+                states = btc_brain.predict_all(df_btc_hmm)
+                btc_macro_regimes = pd.Series(states, index=df_btc.index[:len(states)])
+                if not server_mode:
+                    bull = int((btc_macro_regimes == config.REGIME_BULL).sum())
+                    bear = int((btc_macro_regimes == config.REGIME_BEAR).sum())
+                    chop = int((btc_macro_regimes == config.REGIME_CHOP).sum())
+                    logger.info(f"   ✅ BTC macro: {bull} Bull | {bear} Bear | {chop} Chop")
+    except Exception as e:
+        if not server_mode:
+            logger.warning(f"   ⚠️ BTC macro failed: {e} — continuing without")
+
     # Get coin list
     if server_mode:
-        emit({"type": "progress", "pct": 2, "label": "Fetching coin list...", "log": "🔍 Fetching top coins by volume..."})
+        emit({"type": "progress", "pct": 5, "label": "Fetching coin list...", "log": "🔍 Fetching top coins by volume..."})
     else:
         logger.info("\n🔍 Fetching top %d coins by volume...", coin_limit)
 
     coins = get_top_coins_by_volume(limit=coin_limit)
 
     if server_mode:
-        emit({"type": "progress", "pct": 5, "label": f"Found {len(coins)} coins", "log": f"   Found {len(coins)} coins"})
+        emit({"type": "progress", "pct": 8, "label": f"Found {len(coins)} coins", "log": f"   Found {len(coins)} coins"})
     else:
         logger.info(f"   Found {len(coins)} coins")
 
@@ -403,7 +534,7 @@ def run_backtest(server_mode=False, coin_limit=50):
             logger.info(f"\n[{idx+1}/{len(coins)}] Backtesting {symbol}...")
 
         try:
-            trades, sym, status = backtest_coin(symbol)
+            trades, sym, status = backtest_coin(symbol, btc_macro_regimes=btc_macro_regimes)
             if status != "OK":
                 if server_mode:
                     emit({"type": "progress", "pct": pct, "label": f"{symbol}: {status}", "log": f"   ⚠️ {symbol}: {status}"})

@@ -12,6 +12,7 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 TESTNET = os.getenv("TESTNET", "true").lower() == "true"
 PAPER_TRADE = True
+ENGINE_USER_ID = "cmmbvbo2l0000j1xo3rqvkfhz"  # Default user for engine trades (admin)
 PAPER_MAX_CAPITAL = 2500       # Total portfolio: 25 slots × $100/trade
 
 # ─── CoinDCX API (used for LIVE trading) ────────────────────────────────────────
@@ -20,7 +21,8 @@ COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "")
 COINDCX_BASE_URL = "https://api.coindcx.com"
 COINDCX_PUBLIC_URL = "https://public.coindcx.com"
 COINDCX_MARGIN_CURRENCY = os.getenv("COINDCX_MARGIN_CURRENCY", "USDT")
-EXCHANGE_LIVE = ""  # Live exchange: coindcx
+EXCHANGE_LIVE = os.getenv("EXCHANGE_LIVE", "")  # "coindcx" or "binance"
+BINANCE_FUTURES_TESTNET = os.getenv("BINANCE_FUTURES_TESTNET", "true").lower() == "true"
 
 # ─── CoinDCX Fees ───────────────────────────────────────────────────────────────
 TAKER_FEE_COINDCX = 0.0005    # 0.05% per leg
@@ -112,6 +114,7 @@ MT_T1_BOOK_PCT = 0.25            # Book 25% of original qty at T1
 MT_T2_BOOK_PCT = 0.50            # Book 50% of remaining qty at T2
 
 # ─── Capital Protection (Profit Lock) ──────────────────────────────────────────
+CAPITAL_PROTECT_ENABLED = False      # Disabled — Phase 3 proved it hurts multi-target perf
 CAPITAL_PROTECT_TRIGGER_PCT = 10.0   # Activate when leveraged P&L ≥ 10%
 CAPITAL_PROTECT_LOCK_PCT = 4.0       # Move SL to lock in +4% profit above/below entry
 

@@ -1,0 +1,290 @@
+datasource db {
+    provider = "sqlite"
+    url      = env("DATABASE_URL")
+}
+
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "../node_modules/.prisma/client"
+}
+
+// ─── Users & Auth ────────────────────────────────────────────────────────────
+
+model User {
+  id                String             @id @default(cuid())
+  email             String             @unique
+  name              String?
+  password          String
+  emailVerified     DateTime?
+  image             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  role              String             @default("user")
+  
+  subscription      Subscription?
+  bots              Bot[]
+  exchangeApiKeys   ExchangeApiKey[]
+  accounts          Account[]
+  sessions          Session[]
+  
+  @@index([email])
+}
+
+model Subscription {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  tier              String    @default("free") // free, pro, ultra
+  coinScans         Int       @default(0) // 0 for free trial, 15 for pro, 50 for ultra
+  status            String    @default("trial") // trial, active, expired, cancelled
+  
+  trialEndsAt       DateTime?
+  currentPeriodEnd  DateTime?
+  
+  razorpayPaymentId String?
+  razorpayOrderId   String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([userId])
+}
+
+model ExchangeApiKey {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  exchange          String    // binance, coindcx
+  apiKey            String    // encrypted at rest
+  apiSecret         String    // encrypted at rest
+  encryptionIv      String?   // AES IV for decryption
+  
+  isActive          Boolean   @default(true)
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@unique([userId, exchange])
+  @@index([userId])
+}
+
+// ─── Bot & Engine ────────────────────────────────────────────────────────────
+
+model Bot {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name              String
+  exchange          String    // binance, coindcx
+  status            String    @default("stopped") // running, stopped, paused, error
+  
+  isActive          Boolean   @default(false)
+  
+  startedAt         DateTime?
+  stoppedAt         DateTime?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  trades            Trade[]
+  config            BotConfig?
+  state             BotState?
+  
+  @@index([userId])
+  @@index([status])
+}
+
+model BotConfig {
+  id                String    @id @default(cuid())
+  botId             String    @unique
+  bot               Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  // Trading params
+  mode              String    @default("paper")  // paper, live
+  capitalPerTrade   Float     @default(100)
+  maxOpenTrades     Int       @default(5)
+  
+  // Risk management
+  slMultiplier      Float     @default(0.8)      // ATR stop-loss multiplier
+  tpMultiplier      Float     @default(1.0)      // ATR take-profit multiplier
+  maxLossPct        Float     @default(-15)      // max loss per trade %
+  
+  // Multi-target settings
+  multiTargetEnabled Boolean  @default(true)
+  t1Multiplier      Float    @default(0.5)       // T1 = 0.5× ATR from entry
+  t2Multiplier      Float    @default(1.0)       // T2 = 1.0× ATR
+  t3Multiplier      Float    @default(1.5)       // T3 = 1.5× ATR
+  t1BookPct         Float    @default(0.25)      // book 25% at T1
+  t2BookPct         Float    @default(0.50)      // book 50% at T2
+  
+  // Coin watchlist (JSON array of symbols)
+  coinList          Json      @default("[]")     // ["BTCUSDT","ETHUSDT",...]
+  
+  // Conviction / leverage tiers (JSON)
+  leverageTiers     Json?     // [{min:40,max:55,lev:5},{min:55,max:70,lev:10}...]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model BotState {
+  id                String    @id @default(cuid())
+  botId             String    @unique
+  bot               Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  engineStatus      String    @default("idle")   // idle, running, error
+  lastCycleAt       DateTime?
+  cycleCount        Int       @default(0)
+  cycleDurationMs   Int?                          // last cycle duration
+  
+  // Per-coin HMM states (JSON blob — regime, features, signals)
+  coinStates        Json?     // {BTCUSDT: {regime:1, features:{...}, signal:"BUY"}, ...}
+  
+  // Engine health
+  errorMessage      String?
+  errorAt           DateTime?
+  
+  updatedAt         DateTime  @updatedAt
+}
+
+// ─── Trades ──────────────────────────────────────────────────────────────────
+
+model Trade {
+  id                String    @id @default(cuid())
+  botId             String
+  bot               Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  // Core trade info
+  coin              String    // e.g., DOGEUSDT, SUIUSDT
+  position          String    // long, short
+  regime            String    // bullish, bearish
+  confidence        Float     // 0-100
+  mode              String    @default("paper")  // paper, live
+  
+  leverage          Float     // e.g., 10, 15
+  capital           Float     // margin used
+  quantity          Float     @default(0)         // filled quantity
+  
+  // Prices
+  entryPrice        Float
+  currentPrice      Float?
+  exitPrice         Float?
+  
+  // Risk levels  
+  stopLoss          Float
+  takeProfit        Float
+  slType            String    @default("fixed") // fixed, trail_x1, trail_x2
+  
+  // ─── Multi-Target (T1/T2/T3) ──────────────────
+  t1Price           Float?
+  t2Price           Float?
+  t3Price           Float?
+  t1Hit             Boolean   @default(false)
+  t2Hit             Boolean   @default(false)
+  
+  // ─── Trailing Stop-Loss ────────────────────────
+  trailingSl        Float?
+  trailingTp        Float?
+  trailingActive    Boolean   @default(false)
+  trailSlCount      Int       @default(0)
+  
+  // ─── Capital Protection ────────────────────────
+  capitalProtectionActive Boolean @default(false)
+  
+  // ─── Original values (before partial closes) ──
+  originalQty       Float?
+  originalCapital   Float?
+  
+  // ─── PNL ───────────────────────────────────────
+  status            String    @default("active") // active, closed, cancelled
+  activePnl         Float     @default(0)
+  activePnlPercent  Float     @default(0)
+  totalPnl          Float     @default(0)
+  totalPnlPercent   Float     @default(0)
+  
+  // ─── Exit Info ─────────────────────────────────
+  exitReason        String?   // T1, T2, T3, FIXED_SL, SL_T1, SL_T2, TRAIL_SL_3, MAX_LOSS, etc.
+  exitPercent       Float?
+  
+  // ─── Exchange Order References ─────────────────
+  exchangeOrderId   String?
+  exchangePositionId String?
+  
+  // ─── Timestamps ────────────────────────────────
+  entryTime         DateTime  @default(now())
+  exitTime          DateTime?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // ─── Partial bookings linked to this trade ─────
+  partialBookings   PartialBooking[]
+  
+  @@index([botId])
+  @@index([status])
+  @@index([coin])
+  @@index([mode])
+}
+
+// ─── Partial Booking Records (T1/T2 exits) ───────────────────────────────────
+
+model PartialBooking {
+  id              String    @id @default(cuid())
+  tradeId         String
+  trade           Trade     @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  
+  target          String    // T1, T2, T3
+  bookPercent     Float     // 0.25 for T1, 0.50 for T2
+  quantity        Float     // how much was closed
+  exitPrice       Float     // price at time of partial close
+  pnl             Float     // realized PNL for this partial
+  pnlPercent      Float     // realized PNL %
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([tradeId])
+}
+
+// ─── NextAuth Models ─────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}

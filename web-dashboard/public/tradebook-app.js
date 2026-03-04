@@ -33,6 +33,11 @@ function formatPrice(p) {
     if (p >= 1) return '$' + p.toFixed(4);
     return '$' + p.toFixed(6);
 }
+function formatPrice4(p) {
+    p = parseFloat(p);
+    if (isNaN(p)) return '—';
+    return p.toFixed(4);
+}
 
 function formatPnl(val) {
     val = parseFloat(val) || 0;
@@ -545,12 +550,11 @@ function renderTable(trades) {
       <th data-col="10" onclick="sortTradeTable(10)" style="cursor:pointer;">Status ⇅</th>
       <th data-col="11" onclick="sortTradeTable(11)" style="cursor:pointer;">Active PnL ⇅</th>
       <th data-col="12" onclick="sortTradeTable(12)" style="cursor:pointer;">Total PnL ⇅</th>
-      <th data-col="13" onclick="sortTradeTable(13)" style="cursor:pointer;">Duration ⇅</th>
-      <th data-col="14" onclick="sortTradeTable(14)" style="cursor:pointer;">Exit R ⇅</th>
-      <th data-col="15" onclick="sortTradeTable(15)" style="cursor:pointer;">Exit Price ⇅</th>
-      <th data-col="16" onclick="sortTradeTable(16)" style="cursor:pointer;">Entry Time ⇅</th>
-      <th data-col="17" onclick="sortTradeTable(17)" style="cursor:pointer;">Exit Time ⇅</th>
-      <th>SL Type</th>
+      <th data-col="13" onclick="sortTradeTable(13)" style="cursor:pointer;">Exit R ⇅</th>
+      <th data-col="14" onclick="sortTradeTable(14)" style="cursor:pointer;">Exit Price ⇅</th>
+      <th data-col="15" onclick="sortTradeTable(15)" style="cursor:pointer;">Entry Time ⇅</th>
+      <th data-col="16" onclick="sortTradeTable(16)" style="cursor:pointer;">Exit Time ⇅</th>
+      <th>Targets</th>
     </tr></thead><tbody>`;
 
     // For cumulative P&L
@@ -595,24 +599,24 @@ function renderTable(trades) {
         // Exit reason badge — enriched format
         let exitBadge = '';
         const er = t.exit_reason || '';
-        if (er === 'T1') exitBadge = '<span class="exit-reason-badge tp">🎯 T1 (25%)</span>';
-        else if (er === 'T2') exitBadge = '<span class="exit-reason-badge tp">🎯 T2 (50%)</span>';
-        else if (er === 'T3') exitBadge = '<span class="exit-reason-badge tp">🏆 T3 FULL</span>';
-        else if (er === 'SL_T1') exitBadge = '<span class="exit-reason-badge sl">SL @ BE</span>';
-        else if (er === 'SL_T2') exitBadge = '<span class="exit-reason-badge sl">SL @ T1</span>';
-        else if (er.startsWith('FIXED_TP')) exitBadge = '<span class="exit-reason-badge tp">FIXED TP</span>';
-        else if (er.startsWith('TP_EXT_')) exitBadge = `<span class="exit-reason-badge tp">${er.replace('_', ' ')}</span>`;
-        else if (er.startsWith('FIXED_SL')) exitBadge = '<span class="exit-reason-badge sl">FIXED SL</span>';
+        if (er === 'T1') exitBadge = '<span class="exit-reason-badge tp">🎯 T1 Book 25%</span>';
+        else if (er === 'T2') exitBadge = '<span class="exit-reason-badge tp">🎯 T2 Book 50%</span>';
+        else if (er === 'T3') exitBadge = '<span class="exit-reason-badge tp">🏆 T3 Full Exit</span>';
+        else if (er === 'SL_T1') exitBadge = '<span class="exit-reason-badge sl">🛡️ SL @ Breakeven</span>';
+        else if (er === 'SL_T2') exitBadge = '<span class="exit-reason-badge sl">🛡️ SL @ T1</span>';
+        else if (er.startsWith('MAX_LOSS')) exitBadge = `<span class="exit-reason-badge sl">🛑 ${er.replace('MAX_LOSS_', 'Max Loss ')}</span>`;
+        else if (er === 'FIXED_SL') exitBadge = '<span class="exit-reason-badge sl">🔴 Stop Loss</span>';
         else if (er.startsWith('TRAIL_SL_')) {
-            const hasPF = er.includes('PF Lock');
-            exitBadge = `<span class="exit-reason-badge ${hasPF ? 'tp' : 'sl'}">${er}</span>`;
+            const hasPF = er.includes('PF Lock') || er.includes('Locked');
+            exitBadge = `<span class="exit-reason-badge ${hasPF ? 'tp' : 'sl'}">${hasPF ? '🛡️' : '📉'} ${er.replace('TRAIL_SL_', 'Trail SL #')}</span>`;
         }
-        else if (er.startsWith('MAX_LOSS')) exitBadge = `<span class="exit-reason-badge sl">${er.replace('MAX_LOSS_', 'MAX LOSS ')}</span>`;
-        else if (er === 'MANUAL') exitBadge = '<span class="exit-reason-badge manual">MANUAL</span>';
-        else if (er === 'TAKE_PROFIT') exitBadge = '<span class="exit-reason-badge tp">TP</span>';
-        else if (er === 'TRAILING_TP') exitBadge = '<span class="exit-reason-badge tp">TRAIL TP</span>';
-        else if (er === 'STOP_LOSS') exitBadge = '<span class="exit-reason-badge sl">SL</span>';
-        else if (er === 'TRAILING_SL') exitBadge = '<span class="exit-reason-badge sl">TRAIL SL</span>';
+        else if (er.startsWith('FIXED_TP')) exitBadge = '<span class="exit-reason-badge tp">✅ Fixed TP</span>';
+        else if (er.startsWith('TP_EXT_')) exitBadge = `<span class="exit-reason-badge tp">📈 ${er.replace('_', ' ')}</span>`;
+        else if (er === 'TAKE_PROFIT') exitBadge = '<span class="exit-reason-badge tp">✅ Take Profit</span>';
+        else if (er === 'TRAILING_TP') exitBadge = '<span class="exit-reason-badge tp">📈 Trail TP</span>';
+        else if (er === 'STOP_LOSS') exitBadge = '<span class="exit-reason-badge sl">🔴 Stop Loss</span>';
+        else if (er === 'TRAILING_SL') exitBadge = '<span class="exit-reason-badge sl">📉 Trail SL</span>';
+        else if (er === 'MANUAL') exitBadge = '<span class="exit-reason-badge manual">✋ Manual</span>';
         else if (er) exitBadge = `<span class="exit-reason-badge manual">${er}</span>`;
 
         html += `<tr>
@@ -625,27 +629,32 @@ function renderTable(trades) {
       <td class="col-price">$${(t.capital || 100).toFixed(0)}</td>
       <td class="col-price">${formatPrice(t.entry_price)}</td>
       <td class="col-price ${isActive ? pnlClass(uPnl) : ''}">${isActive ? formatPrice(t.current_price) : '—'}</td>
-      <td class="col-price col-sltp" style="font-size:10px">${formatPrice(t.trailing_sl || t.stop_loss)} / ${formatPrice(t.trailing_tp || t.take_profit)}${t.trailing_active ? ' <span class="trail-indicator">⟟</span>' : ''}</td>
+      <td class="col-price col-sltp" style="font-size:10px">${formatPrice4(t.trailing_sl || t.stop_loss)} / ${formatPrice4(t.trailing_tp || t.take_profit)}${t.trailing_active ? ' <span class="trail-indicator">⟟</span>' : ''}</td>
       <td><span class="status-badge ${isActive ? 'active' : 'closed'}">${t.status}</span></td>
       <td class="${pnlClass(uPnl)}">${isActive ? `${formatPnl(uPnl)} (${formatPnlPct(uPnlPct)})` : '—'}</td>
       <td class="${pnlClass(rPnl)}">${!isActive ? `${formatPnl(rPnl)} (${formatPnlPct(rPnlPct)})` : '—'}</td>
-      <td>${durStr}</td>
       <td>${exitBadge || '—'}</td>
       <td class="col-price">${t.exit_price ? formatPrice(t.exit_price) : '—'}</td>
       <td>${formatDateTime(t.entry_timestamp)}</td>
       <td>${t.exit_timestamp ? formatDateTime(t.exit_timestamp) : '—'}</td>
       <td>${(() => {
-                // Multi-target status display
-                if (t.t1_price) {
+                // Multi-target progress for active trades
+                if (isActive && t.t1_price) {
                     const t1 = t.t1_hit ? '✅' : '⬜';
                     const t2 = t.t2_hit ? '✅' : '⬜';
-                    const t3 = (t.exit_reason === 'T3') ? '✅' : '⬜';
+                    const t3 = '⬜';
                     return `<span class="exit-reason-badge tp" style="font-size:10px">${t1}T1 ${t2}T2 ${t3}T3</span>`;
                 }
-                if (t.parent_trade_id) return `<span class="exit-reason-badge tp" style="font-size:10px">📊 Partial</span>`;
-                if (t.capital_protection_active) return '<span class="exit-reason-badge tp">🛡️ Protect</span>';
-                if (t.trailing_active) return `<span class="exit-reason-badge sl">Trail ×${t.trail_sl_count || 1}</span>`;
-                return '<span class="exit-reason-badge manual">Fixed</span>';
+                if (isActive) return '—';
+                // Closed trades: show target progress summary
+                if (t.t1_price) {
+                    const t1 = t.t1_hit ? '✅' : '❌';
+                    const t2 = t.t2_hit ? '✅' : '❌';
+                    const t3 = (t.exit_reason === 'T3') ? '✅' : '❌';
+                    return `<span style="font-size:10px">${t1}T1 ${t2}T2 ${t3}T3</span>`;
+                }
+                if (t.parent_trade_id) return `<span style="font-size:10px">📊 Partial</span>`;
+                return '—';
             })()}</td>
     </tr>`;
     });
@@ -810,8 +819,8 @@ function renderLiveTable(trades) {
       <th>Coin</th><th>Position</th><th>Regime</th><th>Conf.</th>
       <th>Lev. X</th><th>Capital</th><th>Entry Price</th><th>CMP</th>
       <th>SL / TP</th><th>Status</th><th>Active PnL</th><th>Total PnL</th>
-      <th>Duration</th><th>Exit R</th><th>Exit Price</th><th>Entry Time</th>
-      <th>Exit Time</th><th>SL Type</th>
+      <th>Exit R</th><th>Exit Price</th><th>Entry Time</th>
+      <th>Exit Time</th><th>Targets</th>
     </tr></thead><tbody>`;
     sorted.forEach(t => {
         const posClass = t.position === 'LONG' ? 'side-buy' : 'side-sell';
@@ -825,12 +834,20 @@ function renderLiveTable(trades) {
         const durStr = dur >= 60 ? `${(dur / 60).toFixed(1)}h` : `${dur.toFixed(0)}m`;
         const er = t.exit_reason || '';
         let exitBadge = '';
-        if (er.startsWith('FIXED_TP')) exitBadge = '<span class="exit-reason-badge tp">FIXED TP</span>';
-        else if (er.startsWith('TP_EXT_')) exitBadge = `<span class="exit-reason-badge tp">${er}</span>`;
-        else if (er.startsWith('FIXED_SL')) exitBadge = '<span class="exit-reason-badge sl">FIXED SL</span>';
-        else if (er.startsWith('TRAIL_SL_')) exitBadge = `<span class="exit-reason-badge ${er.includes('PF') ? 'tp' : 'sl'}">${er}</span>`;
-        else if (er.startsWith('MAX_LOSS')) exitBadge = `<span class="exit-reason-badge sl">${er.replace('MAX_LOSS_', 'MAX LOSS ')}</span>`;
-        else if (er === 'MANUAL') exitBadge = '<span class="exit-reason-badge manual">MANUAL</span>';
+        if (er === 'T1') exitBadge = '<span class="exit-reason-badge tp">🎯 T1 Book 25%</span>';
+        else if (er === 'T2') exitBadge = '<span class="exit-reason-badge tp">🎯 T2 Book 50%</span>';
+        else if (er === 'T3') exitBadge = '<span class="exit-reason-badge tp">🏆 T3 Full Exit</span>';
+        else if (er === 'SL_T1') exitBadge = '<span class="exit-reason-badge sl">🛡️ SL @ Breakeven</span>';
+        else if (er === 'SL_T2') exitBadge = '<span class="exit-reason-badge sl">🛡️ SL @ T1</span>';
+        else if (er.startsWith('MAX_LOSS')) exitBadge = `<span class="exit-reason-badge sl">🛑 ${er.replace('MAX_LOSS_', 'Max Loss ')}</span>`;
+        else if (er === 'FIXED_SL') exitBadge = '<span class="exit-reason-badge sl">🔴 Stop Loss</span>';
+        else if (er.startsWith('TRAIL_SL_')) {
+            const hasPF = er.includes('PF Lock') || er.includes('Locked');
+            exitBadge = `<span class="exit-reason-badge ${hasPF ? 'tp' : 'sl'}">${hasPF ? '🛡️' : '📉'} ${er.replace('TRAIL_SL_', 'Trail SL #')}</span>`;
+        }
+        else if (er.startsWith('FIXED_TP')) exitBadge = '<span class="exit-reason-badge tp">✅ Fixed TP</span>';
+        else if (er.startsWith('TP_EXT_')) exitBadge = `<span class="exit-reason-badge tp">📈 ${er}</span>`;
+        else if (er === 'MANUAL') exitBadge = '<span class="exit-reason-badge manual">✋ Manual</span>';
         else if (er) exitBadge = `<span class="exit-reason-badge manual">${er}</span>`;
         html += `<tr>
       <td><strong>${t.symbol || '—'}</strong></td>
@@ -841,16 +858,24 @@ function renderLiveTable(trades) {
       <td>$${(t.capital || 0).toFixed(0)}</td>
       <td class="col-price">${formatPrice(t.entry_price)}</td>
       <td class="col-price ${pnlClass(uPnl)}">${formatPrice(t.current_price)}</td>
-      <td style="font-size:10px;">${formatPrice(t.stop_loss)}<br>${formatPrice(t.take_profit)}</td>
+      <td style="font-size:10px;">${formatPrice4(t.stop_loss)}<br>${formatPrice4(t.take_profit)}</td>
       <td><span class="status-badge ${t.status === 'ACTIVE' ? 'active' : 'closed'}">${t.status}</span></td>
       <td class="${pnlClass(uPnl)}">${formatPnl(uPnl)}<br><span style="font-size:10px;">${formatPnlPct(uPnlPct)}</span></td>
       <td class="${pnlClass(rPnl)}">${formatPnl(rPnl)}<br><span style="font-size:10px;">${formatPnlPct(rPnlPct)}</span></td>
-      <td>${durStr}</td>
       <td>${exitBadge || '—'}</td>
       <td class="col-price">${t.exit_price ? formatPrice(t.exit_price) : '—'}</td>
       <td>${formatDateTime(t.entry_timestamp)}</td>
       <td>${t.exit_timestamp ? formatDateTime(t.exit_timestamp) : '—'}</td>
-      <td>${t.capital_protection_active ? '<span class="exit-reason-badge tp">🛡️ Protect</span>' : t.trailing_active ? '<span class="exit-reason-badge sl">Trail ×' + (t.trail_sl_count || 1) + '</span>' : '<span class="exit-reason-badge manual">Fixed</span>'}</td>
+      <td>${(() => {
+                if (t.t1_price) {
+                    const t1 = t.t1_hit ? '✅' : '❌';
+                    const t2 = t.t2_hit ? '✅' : '❌';
+                    const t3 = (t.exit_reason === 'T3') ? '✅' : '❌';
+                    return `<span style="font-size:10px">${t1}T1 ${t2}T2 ${t3}T3</span>`;
+                }
+                if (t.parent_trade_id) return `<span style="font-size:10px">📊 Partial</span>`;
+                return '—';
+            })()}</td>
     </tr>`;
     });
     html += '</tbody></table>';

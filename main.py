@@ -301,28 +301,6 @@ class RegimeMasterBot:
                 "📊 Position limit reached (%d/%d). No new deployments this cycle.",
                 tradebook_active_count, config.MAX_CONCURRENT_POSITIONS,
             )
-            # AUTO-HALT: 25 positions reached → pause engine for 1 hour
-            if tradebook_active_count >= config.MAX_CONCURRENT_POSITIONS:
-                try:
-                    import json
-                    from datetime import timedelta
-                    halt_until = (datetime.now(IST).replace(tzinfo=None) + timedelta(hours=1)).isoformat() + "Z"
-                    state_path = os.path.join(os.path.dirname(__file__), "data", "engine_state.json")
-                    halt_state = {
-                        "status": "paused",
-                        "paused_at": datetime.now(IST).replace(tzinfo=None).isoformat() + "Z",
-                        "paused_by": "auto_25_cap",
-                        "halt_until": halt_until,
-                        "reason": f"25 active positions reached — auto-halted for 1 hour until {halt_until}",
-                    }
-                    with open(state_path, "w") as f:
-                        json.dump(halt_state, f, indent=2)
-                    logger.warning(
-                        "🛑 AUTO-HALT: %d positions active (max %d). Engine paused for 1 hour until %s",
-                        tradebook_active_count, config.MAX_CONCURRENT_POSITIONS, halt_until,
-                    )
-                except Exception as e:
-                    logger.error("Failed to write auto-halt state: %s", e)
 
         # ── Loss streak cooldown: pause 30 min after 5 consecutive losses ──
         LOSS_STREAK_LIMIT = 5
@@ -406,6 +384,7 @@ class RegimeMasterBot:
                 confidence=trade["confidence"],
                 reason=trade["reason"],
                 capital=fill_capital,
+                user_id=getattr(config, 'ENGINE_USER_ID', None),
             )
 
             self._active_positions[sym] = {
@@ -972,6 +951,7 @@ class RegimeMasterBot:
                 reason="Auto-synced from CoinDCX",
                 capital=capital,
                 mode="LIVE",
+                user_id=getattr(config, 'ENGINE_USER_ID', None),
             )
 
             self._active_positions[sym] = {

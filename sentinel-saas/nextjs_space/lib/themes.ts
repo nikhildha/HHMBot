@@ -1,0 +1,73 @@
+export const themes = {
+  ocean: {
+    name: 'Ocean Blue',
+    colors: {
+      primary: '#0891B2',
+      primaryDark: '#0E7490',
+      primaryLight: '#06B6D4',
+      accent: '#22D3EE',
+      background: '#0A0E1A',
+      surface: '#111827',
+      surfaceLight: '#1F2937',
+      text: '#F9FAFB',
+      textSecondary: '#9CA3AF',
+      success: '#10B981',
+      danger: '#EF4444',
+      warning: '#F59E0B',
+    },
+  },
+  cyber: {
+    name: 'Cyber Purple',
+    colors: {
+      primary: '#8B5CF6',
+      primaryDark: '#7C3AED',
+      primaryLight: '#A78BFA',
+      accent: '#EC4899',
+      background: '#0F0A1C',
+      surface: '#1A1625',
+      surfaceLight: '#2D2438',
+      text: '#F9FAFB',
+      textSecondary: '#9CA3AF',
+      success: '#10B981',
+      danger: '#EF4444',
+      warning: '#F59E0B',
+    },
+  },
+  emerald: {
+    name: 'Emerald Night',
+    colors: {
+      primary: '#059669',
+      primaryDark: '#047857',
+      primaryLight: '#10B981',
+      accent: '#34D399',
+      background: '#0A1410',
+      surface: '#1C2824',
+      surfaceLight: '#2D3F38',
+      text: '#F9FAFB',
+      textSecondary: '#9CA3AF',
+      success: '#10B981',
+      danger: '#EF4444',
+      warning: '#F59E0B',
+    },
+  },
+  gold: {
+    name: 'Gold Rush',
+    colors: {
+      primary: '#D97706',
+      primaryDark: '#B45309',
+      primaryLight: '#F59E0B',
+      accent: '#FBBF24',
+      background: '#1A1410',
+      surface: '#2D2419',
+      surfaceLight: '#3F3524',
+      text: '#F9FAFB',
+      textSecondary: '#9CA3AF',
+      success: '#10B981',
+      danger: '#EF4444',
+      warning: '#F59E0B',
+    },
+  },
+};
+
+export type ThemeKey = keyof typeof themes;
+export type Theme = typeof themes[ThemeKey];
