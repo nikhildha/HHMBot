@@ -945,8 +945,8 @@ function updateTradebookWithPrices(prices) {
                 const reason = trade.trailing_active ? 'TRAILING_SL' : 'STOP_LOSS';
                 console.log(`[SL-Engine] 🔻 ${reason} hit on ${trade.symbol} — closing ${trade.trade_id}`);
                 trade.status = 'CLOSED';
-                trade.exit_price = effectiveSl;
-                const closePnl = ((effectiveSl - entry) * qty * lev - estCommission);
+                trade.exit_price = current;
+                const closePnl = ((current - entry) * qty * lev - estCommission);
                 trade.realized_pnl = Math.round(closePnl * 10000) / 10000;
                 trade.realized_pnl_pct = capital ? Math.round((closePnl / capital) * 10000) / 100 : 0;
                 trade.exit_timestamp = now;
@@ -961,8 +961,8 @@ function updateTradebookWithPrices(prices) {
                 const reason = trade.tp_extensions > 0 ? 'TRAILING_TP' : 'TAKE_PROFIT';
                 console.log(`[SL-Engine] 🎯 ${reason} hit on ${trade.symbol} — closing ${trade.trade_id}`);
                 trade.status = 'CLOSED';
-                trade.exit_price = effectiveTp;
-                const closePnl = ((effectiveTp - entry) * qty * lev - estCommission);
+                trade.exit_price = current;
+                const closePnl = ((current - entry) * qty * lev - estCommission);
                 trade.realized_pnl = Math.round(closePnl * 10000) / 10000;
                 trade.realized_pnl_pct = capital ? Math.round((closePnl / capital) * 10000) / 100 : 0;
                 trade.exit_timestamp = now;
@@ -978,8 +978,8 @@ function updateTradebookWithPrices(prices) {
                 const reason = trade.trailing_active ? 'TRAILING_SL' : 'STOP_LOSS';
                 console.log(`[SL-Engine] 🔻 ${reason} hit on ${trade.symbol} — closing ${trade.trade_id}`);
                 trade.status = 'CLOSED';
-                trade.exit_price = effectiveSl;
-                const closePnl = ((entry - effectiveSl) * qty * lev - estCommission);
+                trade.exit_price = current;
+                const closePnl = ((entry - current) * qty * lev - estCommission);
                 trade.realized_pnl = Math.round(closePnl * 10000) / 10000;
                 trade.realized_pnl_pct = capital ? Math.round((closePnl / capital) * 10000) / 100 : 0;
                 trade.exit_timestamp = now;
@@ -994,8 +994,8 @@ function updateTradebookWithPrices(prices) {
                 const reason = trade.tp_extensions > 0 ? 'TRAILING_TP' : 'TAKE_PROFIT';
                 console.log(`[SL-Engine] 🎯 ${reason} hit on ${trade.symbol} — closing ${trade.trade_id}`);
                 trade.status = 'CLOSED';
-                trade.exit_price = effectiveTp;
-                const closePnl = ((entry - effectiveTp) * qty * lev - estCommission);
+                trade.exit_price = current;
+                const closePnl = ((entry - current) * qty * lev - estCommission);
                 trade.realized_pnl = Math.round(closePnl * 10000) / 10000;
                 trade.realized_pnl_pct = capital ? Math.round((closePnl / capital) * 10000) / 100 : 0;
                 trade.exit_timestamp = now;
@@ -1491,7 +1491,24 @@ function getEngineState() {
     }
     try {
         if (fs.existsSync(ENGINE_STATE_FILE)) {
-            return JSON.parse(fs.readFileSync(ENGINE_STATE_FILE, 'utf8'));
+            const state = JSON.parse(fs.readFileSync(ENGINE_STATE_FILE, 'utf8'));
+            // Validate: 'running' state MUST have a live PID
+            if (state.status === 'running') {
+                let pidAlive = false;
+                if (state.pid) {
+                    try {
+                        process.kill(state.pid, 0); // signal 0 = check if alive
+                        pidAlive = true;
+                    } catch (e) { /* PID is dead */ }
+                }
+                if (!pidAlive) {
+                    // No PID or dead PID — correct the stale state
+                    const fixed = { status: 'stopped', pid: null, reason: 'stale' };
+                    fs.writeFileSync(ENGINE_STATE_FILE, JSON.stringify(fixed, null, 2));
+                    return fixed;
+                }
+            }
+            return state;
         }
     } catch (e) { }
     return { status: 'stopped', pid: null };

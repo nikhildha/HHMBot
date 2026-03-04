@@ -433,14 +433,17 @@ def update_unrealized(prices=None, funding_rates=None):
             trade["tp_extensions"] = 0
 
         # ── Capital Protection SL ─────────────────────────────────
-        # When profit ≥ 10%, move SL to price where profit = +4%
-        # This locks in gains and covers commission.
-        if pnl_pct >= 10.0:
+        # When leveraged P&L ≥ 10%, move SL to lock in +4% LEVERAGED profit
+        # Formula: lock_price = lock_pct / (100 × leverage)
+        # At 35x: 4%/35 = 0.114% price move = 4% leveraged return
+        if pnl_pct >= config.CAPITAL_PROTECT_TRIGGER_PCT:
             if not trade.get("capital_protection_active"):
+                lev = trade["leverage"]
+                lock_price_pct = config.CAPITAL_PROTECT_LOCK_PCT / (100 * lev)
                 if is_long:
-                    protect_sl = round(entry * 1.04, 6)  # 4% above entry
+                    protect_sl = round(entry * (1 + lock_price_pct), 6)
                 else:
-                    protect_sl = round(entry * 0.96, 6)  # 4% below entry
+                    protect_sl = round(entry * (1 - lock_price_pct), 6)
                 # Only tighten, never loosen
                 if is_long and protect_sl > trade["trailing_sl"]:
                     trade["trailing_sl"] = protect_sl
@@ -448,8 +451,8 @@ def update_unrealized(prices=None, funding_rates=None):
                     trade["trailing_active"] = True
                     trade["trail_sl_count"] = trade.get("trail_sl_count", 0) + 1
                     logger.info(
-                        "🛡️ Capital protection SL activated for %s: SL moved to %.6f (+4%% profit lock)",
-                        trade["trade_id"], protect_sl,
+                        "🛡️ Capital protection SL for %s: SL → %.6f (+%.1f%% leveraged profit lock)",
+                        trade["trade_id"], protect_sl, config.CAPITAL_PROTECT_LOCK_PCT,
                     )
                 elif not is_long and protect_sl < trade["trailing_sl"]:
                     trade["trailing_sl"] = protect_sl
@@ -457,8 +460,8 @@ def update_unrealized(prices=None, funding_rates=None):
                     trade["trailing_active"] = True
                     trade["trail_sl_count"] = trade.get("trail_sl_count", 0) + 1
                     logger.info(
-                        "🛡️ Capital protection SL activated for %s: SL moved to %.6f (+4%% profit lock)",
-                        trade["trade_id"], protect_sl,
+                        "🛡️ Capital protection SL for %s: SL → %.6f (+%.1f%% leveraged profit lock)",
+                        trade["trade_id"], protect_sl, config.CAPITAL_PROTECT_LOCK_PCT,
                     )
 
         # --- Trailing Stop Loss ---
@@ -570,13 +573,13 @@ def update_unrealized(prices=None, funding_rates=None):
                     reason = f"TRAIL_SL_{sl_n}{pf_tag}"
                 else:
                     reason = "FIXED_SL"
-                _close_trade_inline(trade, effective_sl, reason)
+                _close_trade_inline(trade, current, reason)
                 changed = True
                 continue
             if tp_hit:
                 ext = trade["tp_extensions"]
                 reason = f"TP_EXT_{ext}" if ext > 0 else "FIXED_TP"
-                _close_trade_inline(trade, effective_tp, reason)
+                _close_trade_inline(trade, current, reason)
                 changed = True
                 continue
 
