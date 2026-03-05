@@ -97,11 +97,15 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
   const [lastRefresh, setLastRefresh] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [clearSuccess, setClearSuccess] = useState<string | null>(null);
+  const clearPauseRef = useRef(false); // blocks auto-refresh after clearing
 
   useEffect(() => { setMounted(true); }, []);
 
   // Auto-refresh from engine every 15s
   const refreshTrades = useCallback(async () => {
+    // Skip refresh if trades were just cleared (pause for 30s)
+    if (clearPauseRef.current) return;
     setIsRefreshing(true);
     try {
       const res = await fetch('/api/bot-state', { cache: 'no-store' });
@@ -249,10 +253,17 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
   const clearAllTrades = async () => {
     if (!confirm('⚠️ Clear ALL trades from the tradebook? This cannot be undone.')) return;
     setIsClearing(true);
+    setClearSuccess(null);
     try {
       const res = await fetch('/api/reset-trades', { method: 'POST' });
       if (res.ok) {
+        const data = await res.json();
         setTrades([]);
+        // Pause auto-refresh for 30s so cleared state isn't overwritten
+        clearPauseRef.current = true;
+        setTimeout(() => { clearPauseRef.current = false; }, 30000);
+        setClearSuccess(`✅ Cleared ${data.deletedCount || 0} trades`);
+        setTimeout(() => setClearSuccess(null), 8000);
       } else {
         const err = await res.json();
         alert(err.error || 'Failed to clear trades');
@@ -280,6 +291,7 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
                 <p className="text-sm text-[var(--color-text-secondary)]">
                   Complete history · Portfolio analytics · Auto-refreshes every 15s
                   {lastRefresh && <span style={{ marginLeft: '8px', color: '#06B6D4' }}>Last: {lastRefresh}</span>}
+                  {clearSuccess && <span style={{ marginLeft: '8px', color: '#22C55E', fontWeight: 600 }}>{clearSuccess}</span>}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
