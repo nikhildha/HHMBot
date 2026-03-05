@@ -1,6 +1,6 @@
 #!/bin/bash
 # ── SENTINEL Startup Script ──────────────────────────────────────────
-# Only starts the Node.js dashboard. The Python bot engine is started
+# Starts the Next.js SaaS dashboard. The Python bot engine is started
 # via the "Start Engine" button on the dashboard (spawns main.py).
 
 set -e
@@ -10,6 +10,6 @@ echo "🚀 Starting SENTINEL Dashboard..."
 # Ensure data directory exists
 mkdir -p /app/data
 
-# Start Node.js dashboard (the bot is started via the UI)
-cd /app/web-dashboard
-exec node server.js
+# Start Next.js SaaS dashboard (the bot is started via the UI)
+cd /app/sentinel-saas/nextjs_space
+exec npx next start -p ${PORT:-3000}

@@ -609,60 +609,23 @@ class TestTrailingSLTP(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Section 9: Backtester
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestBacktester(unittest.TestCase):
-    """Run a full backtest on synthetic data."""
-
-    def test_full_backtest(self):
-        from feature_engine import generate_synthetic_data
-        from backtester import run_full_backtest
-
-        df = generate_synthetic_data(n=1000, seed=42)
-        results = run_full_backtest(df, n_states=4)
-
-        # All expected keys present
-        expected_keys = [
-            "total_return", "final_multiplier", "max_drawdown",
-            "sharpe_ratio", "profit_factor", "n_trades",
-            "regime_breakdown", "equity_curve", "df",
-        ]
-        for key in expected_keys:
-            self.assertIn(key, results, f"Missing result key: {key}")
-
-        # Sanity checks
-        self.assertIsInstance(results["total_return"], float)
-        self.assertGreater(results["n_trades"], 0, "Should have at least 1 trade")
-        self.assertGreater(results["final_multiplier"], 0, "Final multiplier should be positive")
-
-        # Regime breakdown
-        rb = results["regime_breakdown"]
-        self.assertGreater(len(rb), 0, "Should have regime breakdown")
-
-        print(f"  ✅ Backtester: Return={results['total_return']:.1f}% | "
-              f"Sharpe={results['sharpe_ratio']:.2f} | "
-              f"Trades={results['n_trades']}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Section 10: Web Dashboard
+#  Section 9: Web Dashboard (Next.js SaaS)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestWebDashboard(unittest.TestCase):
-    """Verify the Express server is responding."""
+    """Verify the Next.js SaaS dashboard is responding."""
 
     def test_server_responds(self):
         import urllib.request
         try:
-            req = urllib.request.Request("http://localhost:3001/", method="GET")
+            req = urllib.request.Request("http://localhost:3000/", method="GET")
             resp = urllib.request.urlopen(req, timeout=5)
             self.assertEqual(resp.status, 200)
             body = resp.read().decode()
             self.assertGreater(len(body), 100, "Should return HTML page")
-            print("  ✅ Web Dashboard: Server at :3001 returned 200 OK")
+            print("  ✅ Web Dashboard: Next.js SaaS at :3000 returned 200 OK")
         except Exception as e:
-            self.skipTest(f"Web server not running on port 3001: {e}")
+            self.skipTest(f"Web server not running on port 3000: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -27,10 +27,10 @@ from __future__ import annotations
 import csv
 import logging
 import os
-import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Tuple, Counter
+from typing import Dict, List, Optional, Tuple
 
 import config
 from sentiment_sources import (
@@ -132,6 +132,11 @@ def _load_finbert():
         logger.debug("FinBERT unavailable: %s  (VADER-only mode)", e)
         _finbert_pipeline = None
     return _finbert_pipeline
+
+
+def _source_category(source_str: str) -> str:
+    """Extract top-level source category from 'Category:detail' format, e.g. 'RSS:CoinDesk' → 'RSS'."""
+    return source_str.split(":")[0]
 
 
 # ─── Main engine ─────────────────────────────────────────────────────────────
@@ -239,8 +244,8 @@ class SentimentEngine:
             unique.append(item)
 
         # Keep seen_urls from growing unboundedly
-        if len(self._seen_urls) > 5000:
-            self._seen_urls = set(list(self._seen_urls)[-2000:])
+        if len(self._seen_urls) > config.SENTIMENT_DEDUPE_URL_LIMIT:
+            self._seen_urls = set(list(self._seen_urls)[-config.SENTIMENT_DEDUPE_URL_TRIM:])
 
         # Only keep articles relevant to the requested coin
         relevant = [
@@ -263,7 +268,7 @@ class SentimentEngine:
             )
 
         # Score each article
-        scored: List[Tuple[float, float, str]] = []  # (score, weight, source)
+        scored: List[Tuple[float, float, str, ArticleItem]] = []  # (score, weight, source, article)
         alert_detected = False
         alert_reasons: List[str] = []
 
@@ -275,7 +280,7 @@ class SentimentEngine:
                 alert_reasons.append(alert_match)
 
             nlp_score = self._score_text(art.text, use_finbert="RSS" in art.source)
-            source_key = art.source.split(":")[0]
+            source_key = _source_category(art.source)
             source_w = _SOURCE_WEIGHTS.get(source_key, 0.6)
             weight = art.importance * source_w
             scored.append((nlp_score, weight, art.source, art))
@@ -288,8 +293,10 @@ class SentimentEngine:
 
         # Confidence: rises with article count and source diversity
         n = len(articles)
-        source_diversity = len(set(s.split(":")[0] for _, _, s, _ in scored))
-        confidence = min(1.0, (min(n, 20) / 20) * 0.7 + (min(source_diversity, 3) / 3) * 0.3)
+        source_diversity = len(set(_source_category(s) for _, _, s, _ in scored))
+        n_scale  = config.SENTIMENT_CONFIDENCE_N_SCALE
+        div_scale = config.SENTIMENT_SOURCE_DIV_SCALE
+        confidence = min(1.0, (min(n, n_scale) / n_scale) * 0.7 + (min(source_diversity, div_scale) / div_scale) * 0.3)
         if n < config.SENTIMENT_MIN_ARTICLES:
             confidence *= 0.5
 
@@ -304,7 +311,7 @@ class SentimentEngine:
         # Store this score for next momentum calc
         self._prev_scores[coin] = (composite, datetime.now(timezone.utc))
 
-        sources_used = list(set(s.split(":")[0] for _, _, s, _ in scored))
+        sources_used = list(set(_source_category(s) for _, _, s, _ in scored))
 
         # Include Fear & Greed as a mild global adjustment (not per-coin)
         fg_score = fg.normalized if fg else 0.0
@@ -312,7 +319,7 @@ class SentimentEngine:
         # Calculate source counts
         source_counts = {}
         for _, _, src, _ in scored:
-            category = src.split(":")[0]  # "RSS", "Reddit", "CryptoPanic"
+            category = _source_category(src)  # "RSS", "Reddit", "CryptoPanic"
             source_counts[category] = source_counts.get(category, 0) + 1
 
         # Extract Top 3 Impact Articles
@@ -366,8 +373,8 @@ class SentimentEngine:
                     label = result["label"].lower()
                     conf  = float(result["score"])
                     fb_score = conf if label == "positive" else (-conf if label == "negative" else 0.0)
-                    # Blend: 40% VADER (social cues) + 60% FinBERT (financial context)
-                    return 0.4 * vader_score + 0.6 * fb_score
+                    # Blend VADER (social cues) + FinBERT (financial context)
+                    return config.SENTIMENT_VADER_WEIGHT * vader_score + config.SENTIMENT_FINBERT_WEIGHT * fb_score
                 except Exception:
                     pass
 

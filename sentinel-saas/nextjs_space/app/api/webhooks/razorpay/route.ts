@@ -140,7 +140,7 @@ export async function POST(request: Request) {
               <p><b>Period End:</b> ${periodEnd.toLocaleDateString()}</p>
             </div>`,
                         is_html: true,
-                        recipient_email: 'nikhildha@gmail.com',
+                        recipient_email: process.env.ADMIN_EMAIL || 'admin@sentinel.app',
                         sender_email: `noreply@${appUrl ? new URL(appUrl).hostname : 'sentinel.app'}`,
                         sender_alias: appName,
                     }),

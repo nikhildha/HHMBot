@@ -24,9 +24,9 @@ COINDCX_MARGIN_CURRENCY = os.getenv("COINDCX_MARGIN_CURRENCY", "USDT")
 EXCHANGE_LIVE = os.getenv("EXCHANGE_LIVE", "")  # "coindcx" or "binance"
 BINANCE_FUTURES_TESTNET = os.getenv("BINANCE_FUTURES_TESTNET", "true").lower() == "true"
 
-# ─── CoinDCX Fees ───────────────────────────────────────────────────────────────
-TAKER_FEE_COINDCX = 0.0005    # 0.05% per leg
-MAKER_FEE_COINDCX = 0.0002    # 0.02% per leg
+# ─── Exchange Fees ──────────────────────────────────────────────────────────────
+TAKER_FEE = 0.0005            # 0.05% taker per leg (Binance & CoinDCX)
+MAKER_FEE = 0.0002            # 0.02% maker per leg
 
 # ─── Trading Symbols ────────────────────────────────────────────────────────────
 PRIMARY_SYMBOL = "BTCUSDT"
@@ -154,10 +154,6 @@ VOL_FILTER_ENABLED = True
 VOL_MIN_ATR_PCT = 0.003
 VOL_MAX_ATR_PCT = 0.06
 
-# ─── Fees ────────────────────────────────────────────────────────────────────────
-TAKER_FEE = 0.0005            # 0.05% Binance futures taker per leg (0.1% round trip)
-MAKER_FEE = 0.0002            # 0.02% Binance futures maker
-
 # ─── Sideways Strategy ──────────────────────────────────────────────────────────
 BB_LENGTH = 20
 BB_STD = 2.0
@@ -197,13 +193,20 @@ COMMANDS_FILE = os.path.join(DATA_DIR, "commands.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ─── Sentiment Engine ─────────────────────────────────────────────────────────
-SENTIMENT_ENABLED        = True
-SENTIMENT_CACHE_MINUTES  = 15          # Cache per-coin results for N minutes
-SENTIMENT_WINDOW_HOURS   = 4           # Look back N hours of articles
-SENTIMENT_MIN_ARTICLES   = 3           # Minimum articles to compute a score
-SENTIMENT_VETO_THRESHOLD = -0.65       # Hard veto gate (fast path before conviction)
-SENTIMENT_STRONG_POS     = 0.45        # Threshold for "strongly positive" label
-SENTIMENT_USE_FINBERT    = True        # Use FinBERT in addition to VADER (requires transformers)
+SENTIMENT_ENABLED           = True
+SENTIMENT_CACHE_MINUTES     = 15       # Cache per-coin results for N minutes
+SENTIMENT_WINDOW_HOURS      = 4        # Look back N hours of articles
+SENTIMENT_MIN_ARTICLES      = 3        # Minimum articles to compute a score
+SENTIMENT_VETO_THRESHOLD    = -0.65    # Hard veto gate (fast path before conviction)
+SENTIMENT_STRONG_POS        = 0.45     # Threshold for "strongly positive" label
+SENTIMENT_USE_FINBERT       = True     # Use FinBERT in addition to VADER (requires transformers)
+SENTIMENT_VADER_WEIGHT      = 0.4      # VADER contribution when blending with FinBERT
+SENTIMENT_FINBERT_WEIGHT    = 0.6      # FinBERT contribution when blending with VADER
+SENTIMENT_DEDUPE_URL_LIMIT  = 5000     # Max tracked URLs before trimming seen-url set
+SENTIMENT_DEDUPE_URL_TRIM   = 2000     # Keep last N URLs when trimming
+SENTIMENT_CONFIDENCE_N_SCALE = 20      # N articles = 70% of confidence score
+SENTIMENT_SOURCE_DIV_SCALE   = 3       # N unique sources = 30% of confidence score
+SENTIMENT_RATE_LIMIT_SLEEP  = 1.2      # Seconds between paginated API requests (sources)
 CRYPTOPANIC_API_KEY      = os.getenv("CRYPTOPANIC_API_KEY", "")
 REDDIT_CLIENT_ID         = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET     = os.getenv("REDDIT_CLIENT_SECRET", "")
@@ -235,4 +238,46 @@ CONVICTION_WEIGHT_OI        = 8    # Open Interest change
 CONVICTION_WEIGHT_VOL       = 5    # Volatility quality
 CONVICTION_WEIGHT_SENTIMENT = 15   # Social/news sentiment
 CONVICTION_WEIGHT_ORDERFLOW = 10   # Order book flow
+
+# ─── Conviction Score: Leverage Bands ────────────────────────────────────────
+CONVICTION_MIN_TRADE   = 40   # Below this → no trade (leverage = 0)
+CONVICTION_BAND_LOW    = 55   # 40–54  → 10x leverage
+CONVICTION_BAND_MED    = 70   # 55–69  → 15x leverage
+CONVICTION_BAND_HIGH   = 85   # 70–84  → 25x; 85+ → 35x leverage
+
+# ─── Conviction Score: Penalties ─────────────────────────────────────────────
+CONVICTION_CRASH_PENALTY           = 10   # Macro crash regime hard penalty
+CONVICTION_MACRO_FIGHT_PENALTY     = 8    # Trading against macro direction
+CONVICTION_FUNDING_PENALTY         = 4    # Crowded funding rate penalty
+CONVICTION_OI_PENALTY              = 3    # Adverse OI move penalty
+CONVICTION_SENTIMENT_STRONG_PENALTY = 12  # Strong negative news penalty
+CONVICTION_SENTIMENT_MILD_PENALTY  = 4    # Mild negative sentiment penalty
+CONVICTION_SENTIMENT_NEG_THRESHOLD = -0.20  # Score below this = mild negative
+CONVICTION_FLOW_MILD_PENALTY       = 3    # Mild opposing order flow
+CONVICTION_FLOW_STRONG_PENALTY     = 7    # Strong opposing order flow
+
+# ─── Conviction Score: HMM Confidence Tiers ──────────────────────────────────
+HMM_CONF_TIER_HIGH     = 0.97   # Full weight (100%)
+HMM_CONF_TIER_MED_HIGH = 0.94   # 85% weight
+HMM_CONF_TIER_MED      = 0.90   # 65% weight
+HMM_CONF_TIER_LOW      = 0.85   # 40% weight (below = no contribution)
+
+# ─── Conviction Score: Funding Rate Thresholds ───────────────────────────────
+FUNDING_NEG_STRONG =  -0.0001  # Below: longs paid → BUY favorable (full score)
+FUNDING_POS_MED    =   0.0003  # Above: crowded longs → BUY penalty
+FUNDING_POS_STRONG =   0.0001  # Above: shorts paid → SELL favorable (full score)
+FUNDING_NEG_MED    =  -0.0003  # Below: crowded shorts → SELL penalty
+
+# ─── Conviction Score: OI Change Thresholds ──────────────────────────────────
+OI_CHANGE_HIGH     =  0.03   # > 3%: strong fresh positioning
+OI_CHANGE_MED      =  0.01   # > 1%: moderate positioning
+OI_CHANGE_NEG_HIGH = -0.03   # < -3%: OI falling (short-covering risk for BUY)
+OI_CHANGE_NEG_MED  = -0.01   # < -1%: mild OI contraction
+
+# ─── CoinDCX Execution ───────────────────────────────────────────────────────
+COINDCX_MIN_NOTIONAL      = 120.0   # Minimum order size in USD
+COINDCX_ORDER_SETTLE_SLEEP = 0.5    # Seconds to wait after placing order
+
+# ─── Coin Scanner ────────────────────────────────────────────────────────────
+SCANNER_RATE_LIMIT_SLEEP = 1.0   # Seconds between API calls to avoid rate limiting
 

@@ -176,6 +176,11 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", text or "").strip()
 
 
+def _reddit_importance_score(score: int) -> float:
+    """Map a Reddit post score (upvotes) to an importance weight in [0.4, 1.0]."""
+    return min(1.0, 0.4 + min(score, 5000) / 10000)
+
+
 # ─── Base class ──────────────────────────────────────────────────────────────
 
 class BaseSource:
@@ -197,7 +202,7 @@ class CryptoPanicSource(BaseSource):
     """
     name = "CryptoPanic"
     _BASE = "https://cryptopanic.com/api/v1/posts/"
-    _RATE_LIMIT_SLEEP = 1.2  # seconds between paginated requests
+    _RATE_LIMIT_SLEEP = config.SENTIMENT_RATE_LIMIT_SLEEP
 
     def fetch(self, coins: List[str], since: datetime) -> List[ArticleItem]:
         try:
@@ -381,7 +386,7 @@ class RedditSource(BaseSource):
                             continue
                         text = (post.title or "") + " " + (post.selftext or "")[:300]
                         coins_in = _coin_mentions(text) or ["CRYPTO"]
-                        importance = min(1.0, 0.4 + min(post.score, 5000) / 10000)
+                        importance = _reddit_importance_score(post.score)
                         articles.append(ArticleItem(
                             title=post.title,
                             body=(post.selftext or "")[:300],
@@ -417,7 +422,7 @@ class RedditSource(BaseSource):
                 title = p.get("title", "")
                 body  = (p.get("selftext", "") or "")[:300]
                 coins_in = _coin_mentions(title + " " + body) or ["CRYPTO"]
-                importance = min(1.0, 0.4 + min(p.get("score", 0), 5000) / 10000)
+                importance = _reddit_importance_score(p.get("score", 0))
                 articles.append(ArticleItem(
                     title=title,
                     body=body,

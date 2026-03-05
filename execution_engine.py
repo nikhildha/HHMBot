@@ -67,9 +67,6 @@ class ExecutionEngine:
             )
         return self._client
 
-    # Backward-compatible alias
-    _get_client = _get_binance_client
-
     # ─── Margin & Leverage Setup (Paper/Binance) ──────────────────────────────
 
     def setup_position(self, symbol, leverage):
@@ -141,7 +138,7 @@ class ExecutionEngine:
             }
             self._log_trade(log_entry)
             logger.info(
-                "📝 PAPER %s %s @ %.2f | %dx | SL=%.2f TP=%.2f | %s",
+                "PAPER %s %s @ %.2f | %dx | SL=%.2f TP=%.2f | %s",
                 side, symbol, price, leverage, sl, tp, regime_name,
             )
             return log_entry
@@ -196,12 +193,12 @@ class ExecutionEngine:
             }
             self._log_trade(log_entry)
             logger.info(
-                "✅ Binance %s %s @ %.4f | %dx | qty=%.6f | SL=%.4f TP=%.4f",
+                "Binance %s %s @ %.4f | %dx | qty=%.6f | SL=%.4f TP=%.4f",
                 side, symbol, fill_price, leverage, fill_qty, sl, tp,
             )
             return log_entry
         else:
-            logger.error("❌ Binance trade failed for %s: %s", symbol, result.get("error"))
+            logger.error("Binance trade failed for %s: %s", symbol, result.get("error"))
             return None
 
     # ─── Multi-Target Live Trading Methods ────────────────────────────────────
@@ -262,155 +259,171 @@ class ExecutionEngine:
         import math
         return math.ceil(qty / step) * step
 
-    def _execute_coindcx(self, symbol, side, leverage, quantity, atr,
-                         regime, regime_name, confidence, reason):
-        """
-        Execute a live trade on CoinDCX Futures.
+    @staticmethod
+    def _cdx_price_round(p: float) -> float:
+        """Round price to CoinDCX tick size (fewer decimals for higher prices)."""
+        if p >= 1000:   return round(p, 1)
+        elif p >= 10:   return round(p, 2)
+        elif p >= 1:    return round(p, 3)
+        elif p >= 0.01: return round(p, 4)
+        else:           return round(p, 5)
 
-        Handles CoinDCX-specific requirements:
-          • $120 minimum notional order value
-          • Quantity step-size rounding per instrument
-          • Max leverage auto-clamping with retry
-          • Wallet balance pre-check
+    def _validate_and_size_cdx_order(self, symbol, pair, quantity, leverage, cdx):
+        """Fetch price, enforce min notional, check wallet margin, set leverage.
+
+        Returns (price, sized_quantity, final_leverage, wallet_balance) on success,
+        or None if the order cannot be placed (insufficient funds / inactive instrument).
         """
-        import math
         import re as _re
-        import coindcx_client as cdx
 
-        pair = cdx.to_coindcx_pair(symbol)
-        coindcx_side = side.lower()
+        price = cdx.get_current_price(pair)
+        if price is None:
+            logger.error("Cannot get price for %s — aborting trade.", pair)
+            return None
 
-        COINDCX_MIN_NOTIONAL = 120.0
+        # Enforce minimum order size + round to qty step
+        step = self._cdx_qty_step(price)
+        notional = quantity * price
+        if notional < config.COINDCX_MIN_NOTIONAL:
+            quantity = self._round_to_step(config.COINDCX_MIN_NOTIONAL / price, step)
+            logger.info(
+                "Boosted %s qty to %.6f to meet $%.0f CoinDCX min",
+                symbol, quantity, config.COINDCX_MIN_NOTIONAL,
+            )
+        else:
+            quantity = self._round_to_step(quantity, step)
+        notional = quantity * price
 
+        # Check margin vs wallet balance
+        wallet = cdx.get_usdt_balance()
+        margin_needed = notional / leverage
+        if margin_needed > wallet:
+            logger.warning(
+                "Insufficient balance for %s: need $%.2f margin, have $%.2f — skipping.",
+                symbol, margin_needed, wallet,
+            )
+            return None
+
+        # Set leverage (auto-clamp on exchange rejection)
         try:
-            # 1. Get current price
-            price = cdx.get_current_price(pair)
-            if price is None:
-                logger.error("Cannot get price for %s — aborting trade.", pair)
-                return None
-
-            # 2. Enforce $120 minimum order + round to step size
-            step = self._cdx_qty_step(price)
-            notional = quantity * price
-            if notional < COINDCX_MIN_NOTIONAL:
-                quantity = self._round_to_step(COINDCX_MIN_NOTIONAL / price, step)
-                logger.info(
-                    "📐 Boosted %s qty to %.6f to meet $120 CoinDCX min", symbol, quantity,
-                )
-            else:
-                quantity = self._round_to_step(quantity, step)
-            notional = quantity * price
-
-            # 3. Check margin vs wallet balance
-            margin_needed = notional / leverage
-            wallet = cdx.get_usdt_balance()
-            if margin_needed > wallet:
-                logger.warning(
-                    "💰 Insufficient balance for %s: need $%.2f margin, have $%.2f — skipping.",
-                    symbol, margin_needed, wallet,
-                )
-                return None
-
-            # 4. Set leverage (auto-clamp if exchange rejects)
-            try:
+            cdx.update_leverage(pair, leverage)
+        except Exception as lev_err:
+            err_msg = str(lev_err)
+            m = _re.search(r"Max allowed leverage.*?=\s*([\d.]+)", err_msg)
+            if m:
+                max_lev = int(float(m.group(1)))
+                logger.warning("%s max leverage %dx (requested %dx) — clamping.", symbol, max_lev, leverage)
+                leverage = max_lev
                 cdx.update_leverage(pair, leverage)
-            except Exception as lev_err:
-                err_msg = str(lev_err)
-                # Parse "Max allowed leverage … = 30.0x" from error
-                m = _re.search(r"Max allowed leverage.*?=\s*([\d.]+)", err_msg)
-                if m:
-                    max_lev = int(float(m.group(1)))
-                    logger.warning(
-                        "⚡ %s max leverage %dx (requested %dx) — clamping.", symbol, max_lev, leverage,
-                    )
-                    leverage = max_lev
-                    cdx.update_leverage(pair, leverage)
-                    margin_needed = notional / leverage
-                    if margin_needed > wallet:
-                        logger.warning("💰 Margin $%.2f > balance $%.2f after clamp — skip.", margin_needed, wallet)
-                        return None
-                elif "Instrument is not active" in err_msg:
-                    logger.warning("🚫 %s not active on CoinDCX — skipping.", symbol)
+                margin_needed = notional / leverage
+                if margin_needed > wallet:
+                    logger.warning("Margin $%.2f > balance $%.2f after clamp — skip.", margin_needed, wallet)
                     return None
-                else:
-                    raise
+            elif "Instrument is not active" in err_msg:
+                logger.warning("%s not active on CoinDCX — skipping.", symbol)
+                return None
+            else:
+                raise
 
-            sl, tp = self.risk.calculate_atr_stops(price, atr, side)
+        return price, quantity, leverage, wallet
 
-            # 5a. Round TP/SL to CoinDCX price tick sizes
-            #     CoinDCX rejects prices with excess decimals.
-            def _price_round(p):
-                if p >= 1000:      return round(p, 1)
-                elif p >= 10:      return round(p, 2)
-                elif p >= 1:       return round(p, 3)
-                elif p >= 0.01:    return round(p, 4)
-                else:              return round(p, 5)
+    def _place_cdx_order_with_retry(self, symbol, pair, side, quantity, leverage,
+                                    price, sl, tp, wallet, cdx):
+        """Place a CoinDCX market order, retrying once on qty-step validation errors.
 
-            sl = _price_round(sl)
-            tp = _price_round(tp)
+        Returns the exchange result dict on success, None if margin check fails on retry,
+        or re-raises on unhandled errors.
+        """
+        import re as _re
 
-            # 5b. Place market order with inline TP/SL (retry on qty step error)
-            try:
-                result = cdx.create_order(
+        coindcx_side = side.lower()
+        try:
+            return cdx.create_order(
+                pair=pair, side=coindcx_side, order_type="market_order",
+                quantity=quantity, leverage=leverage,
+                take_profit_price=tp, stop_loss_price=sl,
+            )
+        except Exception as ord_err:
+            err_msg = str(ord_err)
+            m = _re.search(r"divisible by ([\d.]+)", err_msg)
+            if m:
+                real_step = float(m.group(1))
+                quantity = self._round_to_step(config.COINDCX_MIN_NOTIONAL / price, real_step)
+                margin_needed = (quantity * price) / leverage
+                if margin_needed > wallet:
+                    logger.warning("Margin $%.2f > balance after re-step — skip.", margin_needed)
+                    return None
+                logger.info("Retry %s with step=%.6f → qty=%.6f", symbol, real_step, quantity)
+                return cdx.create_order(
                     pair=pair, side=coindcx_side, order_type="market_order",
                     quantity=quantity, leverage=leverage,
                     take_profit_price=tp, stop_loss_price=sl,
                 )
-            except Exception as ord_err:
-                err_msg = str(ord_err)
-                # Parse "Quantity should be divisible by X" and retry
-                m = _re.search(r"divisible by ([\d.]+)", err_msg)
-                if m:
-                    real_step = float(m.group(1))
-                    quantity = self._round_to_step(COINDCX_MIN_NOTIONAL / price, real_step)
-                    notional = quantity * price
-                    margin_needed = notional / leverage
-                    if margin_needed > wallet:
-                        logger.warning("💰 Margin $%.2f > balance after re-step — skip.", margin_needed)
-                        return None
-                    logger.info("📐 Retry %s with step=%.6f → qty=%.6f", symbol, real_step, quantity)
-                    result = cdx.create_order(
-                        pair=pair, side=coindcx_side, order_type="market_order",
-                        quantity=quantity, leverage=leverage,
-                        take_profit_price=tp, stop_loss_price=sl,
-                    )
-                else:
-                    raise
+            raise
+
+    def _read_cdx_confirmed_position(self, pair, price, quantity, leverage, sl, tp, cdx):
+        """Wait for exchange settlement then read back the confirmed position.
+
+        Returns a dict of fill details from the exchange, or an empty dict if
+        the position cannot be read (falls back to locally-estimated values).
+        """
+        import time as _time
+        _time.sleep(config.COINDCX_ORDER_SETTLE_SLEEP)
+        confirmed = {}
+        try:
+            positions = cdx.list_positions()
+            for pos in positions:
+                if pos.get("pair") == pair and float(pos.get("active_pos", 0)) != 0:
+                    confirmed = {
+                        "avg_price":     float(pos.get("avg_price", price)),
+                        "active_pos":    abs(float(pos.get("active_pos", quantity))),
+                        "leverage":      int(float(pos.get("leverage", leverage))),
+                        "locked_margin": float(pos.get("locked_margin", 0)),
+                        "mark_price":    float(pos.get("mark_price", price)),
+                        "position_id":   pos.get("id"),
+                        "sl_trigger":    pos.get("stop_loss_trigger"),
+                        "tp_trigger":    pos.get("take_profit_trigger"),
+                    }
+                    break
+        except Exception as read_err:
+            logger.warning("Could not read back position for %s: %s", pair, read_err)
+        return confirmed
+
+    def _execute_coindcx(self, symbol, side, leverage, quantity, atr,
+                         regime, regime_name, confidence, reason):
+        """Execute a live trade on CoinDCX Futures. Returns a trade log dict or None."""
+        import coindcx_client as cdx
+
+        pair = cdx.to_coindcx_pair(symbol)
+        try:
+            validated = self._validate_and_size_cdx_order(symbol, pair, quantity, leverage, cdx)
+            if validated is None:
+                return None
+            price, quantity, leverage, wallet = validated
+
+            sl, tp = self.risk.calculate_atr_stops(price, atr, side)
+            sl = self._cdx_price_round(sl)
+            tp = self._cdx_price_round(tp)
+
+            result = self._place_cdx_order_with_retry(
+                symbol, pair, side, quantity, leverage, price, sl, tp, wallet, cdx
+            )
+            if result is None:
+                return None
 
             logger.info(
-                "✅ CoinDCX %s %s @ %.4f | %dx | qty=%.6f | SL=%.4f TP=%.4f | %s",
+                "CoinDCX %s %s @ %.4f | %dx | qty=%.6f | SL=%.4f TP=%.4f | %s",
                 side, symbol, price, leverage, quantity, sl, tp, regime_name,
             )
 
-            # 6. Read back CONFIRMED position from CoinDCX (source of truth)
-            import time as _time
-            _time.sleep(0.5)  # Allow exchange to settle
-            confirmed = {}
-            try:
-                positions = cdx.list_positions()
-                for pos in positions:
-                    if pos.get("pair") == pair and float(pos.get("active_pos", 0)) != 0:
-                        confirmed = {
-                            "avg_price":      float(pos.get("avg_price", price)),
-                            "active_pos":     abs(float(pos.get("active_pos", quantity))),
-                            "leverage":       int(float(pos.get("leverage", leverage))),
-                            "locked_margin":  float(pos.get("locked_margin", 0)),
-                            "mark_price":     float(pos.get("mark_price", price)),
-                            "position_id":    pos.get("id"),
-                            "sl_trigger":     pos.get("stop_loss_trigger"),
-                            "tp_trigger":     pos.get("take_profit_trigger"),
-                        }
-                        break
-            except Exception as read_err:
-                logger.warning("Could not read back position for %s: %s", symbol, read_err)
+            confirmed = self._read_cdx_confirmed_position(pair, price, quantity, leverage, sl, tp, cdx)
 
-            # Use CoinDCX-confirmed values where available; fallback to local
-            fill_price   = confirmed.get("avg_price", price)
-            fill_qty     = confirmed.get("active_pos", quantity)
-            fill_lev     = confirmed.get("leverage", leverage)
-            fill_margin  = confirmed.get("locked_margin", 0) or (fill_qty * fill_price / fill_lev)
-            fill_sl      = confirmed.get("sl_trigger", sl)
-            fill_tp      = confirmed.get("tp_trigger", tp)
+            fill_price  = confirmed.get("avg_price", price)
+            fill_qty    = confirmed.get("active_pos", quantity)
+            fill_lev    = confirmed.get("leverage", leverage)
+            fill_margin = confirmed.get("locked_margin", 0) or (fill_qty * fill_price / fill_lev)
+            fill_sl     = confirmed.get("sl_trigger", sl)
+            fill_tp     = confirmed.get("tp_trigger", tp)
 
             log_entry = {
                 "timestamp":    datetime.utcnow().isoformat(),
@@ -435,7 +448,7 @@ class ExecutionEngine:
             return log_entry
 
         except Exception as e:
-            logger.error("❌ CoinDCX Execution Error for %s: %s", symbol, e)
+            logger.error("CoinDCX Execution Error for %s: %s", symbol, e)
             return None
 
     # ─── Emergency Close ─────────────────────────────────────────────────────
@@ -446,7 +459,7 @@ class ExecutionEngine:
         If symbol is provided, close only that symbol.
         """
         if config.PAPER_TRADE:
-            logger.info("📝 PAPER: close_all_positions(%s)", symbol or "ALL")
+            logger.info("PAPER: close_all_positions(%s)", symbol or "ALL")
             return
 
         # ── CoinDCX Live ──
@@ -477,7 +490,7 @@ class ExecutionEngine:
                         continue
 
                 cdx.exit_position(pos_id)
-                logger.info("🔴 CoinDCX: Closed position %s (%s)", pair, pos_id)
+                logger.info("CoinDCX: Closed position %s (%s)", pair, pos_id)
 
             # Cancel all open orders
             cdx.cancel_all_open_orders()

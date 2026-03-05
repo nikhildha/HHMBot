@@ -7,9 +7,12 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # Node
-web-dashboard/node_modules/
+node_modules/
+.next/
+tsconfig.tsbuildinfo
 
 # Data (runtime state — not in repo)
 data/
@@ -17,10 +20,10 @@ data/
 # OS
 .DS_Store
 *.log
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
-web/node_modules/
-sentinel-saas/nextjs_space/node_modules/
-sentinel-saas/nextjs_space/.next/
+*.swp
+*.swo

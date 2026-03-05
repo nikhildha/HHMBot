@@ -1,4 +1,4 @@
-# ── Unified Image: Python Bot + Node.js Dashboard ─────────────────────
+# ── Unified Image: Python Bot + Next.js SaaS Dashboard ────────────────
 FROM python:3.11-slim
 
 # Install Node.js 20
@@ -14,12 +14,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Node.js dependencies ─────────────────────────────────────────────
-COPY web-dashboard/package*.json ./web-dashboard/
-RUN cd web-dashboard && npm install --production
+COPY sentinel-saas/nextjs_space/package*.json ./sentinel-saas/nextjs_space/
+RUN cd sentinel-saas/nextjs_space && npm install
 
 # ── Copy all source code (ARG busts Docker cache on each deploy) ─────
 ARG CACHEBUST=1
 COPY . .
+
+# ── Build Next.js production bundle ──────────────────────────────────
+RUN cd sentinel-saas/nextjs_space && npm run build
 
 # ── Make startup script executable ───────────────────────────────────
 RUN chmod +x /app/start.sh
@@ -29,10 +32,10 @@ RUN mkdir -p /app/data
 
 # ── Environment ──────────────────────────────────────────────────────
 ENV DATA_DIR=/app/data
-ENV PORT=3001
+ENV PORT=3000
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 3001
+EXPOSE 3000
 
-# ── Start both Python bot + Node dashboard ───────────────────────────
+# ── Start both Python bot + Next.js dashboard ────────────────────────
 CMD ["/app/start.sh"]

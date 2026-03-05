@@ -6,6 +6,7 @@ Fetches top coins by 24h trading volume and runs HMM regime analysis.
 """
 import json
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from hmm_brain import HMMBrain
 logger = logging.getLogger("CoinScanner")
 
 # ─── Path for multi-coin state ──────────────────────────────────────────────────
-SCANNER_STATE_FILE = __import__("os").path.join(config.DATA_DIR, "scanner_state.json")
+SCANNER_STATE_FILE = os.path.join(config.DATA_DIR, "scanner_state.json")
 
 # ─── Coins to exclude (no data, wrapped tokens, low liquidity) ───────────────
 COIN_EXCLUDE = {
@@ -151,7 +152,7 @@ def scan_all_regimes(symbols=None, limit=50, timeframe="1h", kline_limit=500):
             # Rate-limit to avoid API throttling
             if (i + 1) % 10 == 0:
                 logger.info("Scanned %d/%d coins...", i + 1, len(symbols))
-                time.sleep(1)
+                time.sleep(config.SCANNER_RATE_LIMIT_SLEEP)
 
         except Exception as e:
             logger.warning("Error scanning %s: %s", symbol, e)

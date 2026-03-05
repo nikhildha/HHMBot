@@ -34,9 +34,6 @@ def _get_binance_client():
     return _binance_client
 
 
-# Keep backward-compatible alias
-_get_client = _get_binance_client
-
 INTERVAL_MAP = {
     "1m":  "1m",
     "3m":  "3m",
@@ -54,11 +51,14 @@ INTERVAL_MAP = {
 # BINANCE FETCHERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_klines_binance(symbol, interval, limit=500):
-    """Fetch candlesticks from Binance (spot or testnet)."""
-    from binance.client import Client as BClient
-    client = _get_binance_client()
+_KLINE_COLUMNS = [
+    "timestamp", "open", "high", "low", "close", "volume",
+    "close_time", "quote_av", "trades", "tb_base_av", "tb_quote_av", "ignore",
+]
 
+def _get_binance_interval(interval):
+    """Map string interval to Binance client constant."""
+    from binance.client import Client as BClient
     binance_map = {
         "1m": BClient.KLINE_INTERVAL_1MINUTE,   "3m": BClient.KLINE_INTERVAL_3MINUTE,
         "5m": BClient.KLINE_INTERVAL_5MINUTE,    "15m": BClient.KLINE_INTERVAL_15MINUTE,
@@ -66,63 +66,48 @@ def _fetch_klines_binance(symbol, interval, limit=500):
         "4h": BClient.KLINE_INTERVAL_4HOUR,      "1d": BClient.KLINE_INTERVAL_1DAY,
         "1w": BClient.KLINE_INTERVAL_1WEEK,
     }
-    binance_interval = binance_map.get(interval, interval)
+    return binance_map.get(interval, interval)
 
+
+def _parse_klines_df(klines):
+    """Convert raw Binance klines list to a clean OHLCV DataFrame."""
+    df = pd.DataFrame(klines, columns=_KLINE_COLUMNS)
+    numeric_cols = ["open", "high", "low", "close", "volume"]
+    df[numeric_cols] = df[numeric_cols].astype(float)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
+    df.reset_index(drop=True, inplace=True)
+    return df
+
+
+def _fetch_klines_binance(symbol, interval, limit=500):
+    """Fetch spot candlesticks from Binance."""
+    client = _get_binance_client()
+    binance_interval = _get_binance_interval(interval)
     try:
         klines = client.get_klines(symbol=symbol, interval=binance_interval, limit=limit)
     except Exception as e:
         logger.error("Binance fetch %s %s failed: %s", symbol, interval, e)
         return None
-
     if not klines:
         return None
-
-    df = pd.DataFrame(klines, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_av", "trades", "tb_base_av", "tb_quote_av", "ignore",
-    ])
-    numeric_cols = ["open", "high", "low", "close", "volume"]
-    df[numeric_cols] = df[numeric_cols].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
-    df.reset_index(drop=True, inplace=True)
+    df = _parse_klines_df(klines)
     logger.debug("Binance: %d candles for %s %s.", len(df), symbol, interval)
     return df
 
 
 def _fetch_futures_klines_binance(symbol, interval, limit=500):
-    """Fetch Binance Futures candlesticks."""
-    from binance.client import Client as BClient
+    """Fetch futures candlesticks from Binance."""
     client = _get_binance_client()
-
-    binance_map = {
-        "1m": BClient.KLINE_INTERVAL_1MINUTE,   "3m": BClient.KLINE_INTERVAL_3MINUTE,
-        "5m": BClient.KLINE_INTERVAL_5MINUTE,    "15m": BClient.KLINE_INTERVAL_15MINUTE,
-        "30m": BClient.KLINE_INTERVAL_30MINUTE,  "1h": BClient.KLINE_INTERVAL_1HOUR,
-        "4h": BClient.KLINE_INTERVAL_4HOUR,      "1d": BClient.KLINE_INTERVAL_1DAY,
-        "1w": BClient.KLINE_INTERVAL_1WEEK,
-    }
-    binance_interval = binance_map.get(interval, interval)
-
+    binance_interval = _get_binance_interval(interval)
     try:
         klines = client.futures_klines(symbol=symbol, interval=binance_interval, limit=limit)
     except Exception as e:
         logger.error("Binance futures fetch %s %s failed: %s", symbol, interval, e)
         return None
-
     if not klines:
         return None
-
-    df = pd.DataFrame(klines, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_av", "trades", "tb_base_av", "tb_quote_av", "ignore",
-    ])
-    numeric_cols = ["open", "high", "low", "close", "volume"]
-    df[numeric_cols] = df[numeric_cols].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
-    df.reset_index(drop=True, inplace=True)
-    return df
+    return _parse_klines_df(klines)
 
 
 def _get_current_price_binance(symbol):

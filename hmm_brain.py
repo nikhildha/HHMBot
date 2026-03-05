@@ -16,7 +16,7 @@ logger = logging.getLogger("HMMBrain")
 logging.getLogger("hmmlearn.base").setLevel(logging.ERROR)
 
 # Feature columns used for HMM training/prediction (must match feature_engine.compute_hmm_features)
-HMM_FEATURES = ["volatility", "volume_change", "rsi_norm"]
+HMM_FEATURES = ["log_return", "volatility", "volume_change", "rsi_norm"]
 
 
 class HMMBrain:
