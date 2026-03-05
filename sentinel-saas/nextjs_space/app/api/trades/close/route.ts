@@ -1,31 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import * as fs from 'fs';
-import * as path from 'path';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
-const DATA_DIR = path.resolve(process.cwd(), '..', '..', 'data');
-
-function readJSON(filename: string, fallback: any = {}) {
-    try {
-        const filepath = path.join(DATA_DIR, filename);
-        if (fs.existsSync(filepath)) {
-            return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-        }
-    } catch { /* silent */ }
-    return fallback;
-}
-
-function writeJSON(filename: string, data: any) {
-    try {
-        const filepath = path.join(DATA_DIR, filename);
-        fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
-    } catch (e) {
-        console.error('Failed to write', filename, e);
-    }
-}
+const ENGINE_API_URL = process.env.ENGINE_API_URL;
 
 export async function POST(request: Request) {
     try {
@@ -41,88 +21,116 @@ export async function POST(request: Request) {
 
         const userId = (session.user as any)?.id;
         const isAdmin = (session.user as any)?.role === 'admin';
-        const book = readJSON('tradebook.json', { trades: [], summary: {} });
-        const trades = book.trades || [];
 
-        // Find target trade(s)
-        const targets: any[] = [];
-        for (const t of trades) {
-            if ((t.status || '').toUpperCase() !== 'ACTIVE') continue;
+        // ─── Find the trade in Prisma ────────────────────────────────────
+        let trade = null;
 
-            // Non-admin can only close their own trades
-            if (!isAdmin && t.user_id !== userId) continue;
+        if (tradeId) {
+            // Try direct ID match first
+            trade = await prisma.trade.findFirst({
+                where: {
+                    id: tradeId,
+                    status: 'active',
+                    bot: isAdmin ? {} : { userId },
+                },
+                include: { bot: true },
+            });
 
-            if (tradeId && t.trade_id === tradeId) {
-                targets.push(t);
-                break;
+            // Fallback: match by exchangeOrderId (engine trade_id)
+            if (!trade) {
+                trade = await prisma.trade.findFirst({
+                    where: {
+                        exchangeOrderId: tradeId,
+                        status: 'active',
+                        bot: isAdmin ? {} : { userId },
+                    },
+                    include: { bot: true },
+                });
             }
-            if (symbol && t.symbol === symbol) {
-                targets.push(t);
+
+            // Fallback: partial match (trade IDs from frontend may be engine_XXX_botId)
+            if (!trade) {
+                trade = await prisma.trade.findFirst({
+                    where: {
+                        id: { contains: tradeId },
+                        status: 'active',
+                        bot: isAdmin ? {} : { userId },
+                    },
+                    include: { bot: true },
+                });
             }
         }
 
-        if (targets.length === 0) {
-            return NextResponse.json({ error: 'No matching active trade found' }, { status: 404 });
-        }
-
-        // Close each target at current price
-        const closed: any[] = [];
-        for (const trade of targets) {
-            const currentPrice = trade.current_price || trade.entry_price;
-            const entry = trade.entry_price;
-            const qty = trade.quantity;
-            const lev = trade.leverage;
-            const capital = trade.capital;
-
-            let rawPnl: number;
-            if (trade.position === 'LONG') {
-                rawPnl = (currentPrice - entry) * qty;
-            } else {
-                rawPnl = (entry - currentPrice) * qty;
-            }
-
-            // Commission
-            const entryNotional = entry * qty;
-            const exitNotional = currentPrice * qty;
-            const commission = Math.round((entryNotional + exitNotional) * 0.0005 * 10000) / 10000;
-            const fundingCost = trade.funding_cost || 0;
-
-            const isLive = (trade.mode || '').toUpperCase() === 'LIVE';
-            let leveragedPnl: number;
-            if (isLive) {
-                leveragedPnl = Math.round((rawPnl - fundingCost) * 10000) / 10000;
-            } else {
-                leveragedPnl = Math.round((rawPnl * lev - commission - fundingCost) * 10000) / 10000;
-            }
-            const pnlPct = capital ? Math.round(leveragedPnl / capital * 100 * 100) / 100 : 0;
-
-            // Calculate duration
-            const entryTime = new Date(trade.entry_timestamp);
-            const duration = (Date.now() - entryTime.getTime()) / 60000;
-
-            trade.exit_timestamp = new Date().toISOString();
-            trade.exit_price = currentPrice;
-            trade.current_price = currentPrice;
-            trade.status = 'CLOSED';
-            trade.exit_reason = 'MANUAL_CLOSE';
-            trade.commission = commission;
-            trade.realized_pnl = leveragedPnl;
-            trade.realized_pnl_pct = pnlPct;
-            trade.unrealized_pnl = 0;
-            trade.unrealized_pnl_pct = 0;
-            trade.duration_minutes = Math.round(duration * 10) / 10;
-
-            closed.push({
-                trade_id: trade.trade_id,
-                symbol: trade.symbol,
-                pnl: leveragedPnl,
-                pnl_pct: pnlPct,
+        if (!trade && symbol) {
+            trade = await prisma.trade.findFirst({
+                where: {
+                    coin: symbol.toUpperCase(),
+                    status: 'active',
+                    bot: isAdmin ? {} : { userId },
+                },
+                include: { bot: true },
+                orderBy: { entryTime: 'desc' },
             });
         }
 
-        writeJSON('tradebook.json', book);
+        if (!trade) {
+            return NextResponse.json({ error: 'No matching active trade found' }, { status: 404 });
+        }
 
-        return NextResponse.json({ success: true, closed });
+        // ─── Calculate PNL at current price ──────────────────────────────
+        const currentPrice = trade.currentPrice || trade.entryPrice;
+        const entry = trade.entryPrice;
+        const capital = trade.capital;
+        const lev = trade.leverage;
+        const isLong = trade.position === 'long';
+
+        const priceDiff = isLong ? (currentPrice - entry) : (entry - currentPrice);
+        const rawPnl = priceDiff / entry * lev * capital;
+        const leveragedPnl = Math.round(rawPnl * 10000) / 10000;
+        const pnlPct = capital > 0 ? Math.round(leveragedPnl / capital * 100 * 100) / 100 : 0;
+
+        // ─── Update trade in Prisma ──────────────────────────────────────
+        await prisma.trade.update({
+            where: { id: trade.id },
+            data: {
+                status: 'closed',
+                exitPrice: currentPrice,
+                exitTime: new Date(),
+                exitReason: 'MANUAL_CLOSE',
+                totalPnl: leveragedPnl,
+                totalPnlPercent: pnlPct,
+                activePnl: 0,
+                activePnlPercent: 0,
+            },
+        });
+
+        // ─── Also try to close on engine (best-effort) ───────────────────
+        if (ENGINE_API_URL) {
+            try {
+                const engineTradeId = trade.exchangeOrderId || trade.id;
+                await fetch(`${ENGINE_API_URL}/api/close-trade`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        trade_id: engineTradeId,
+                        symbol: trade.coin,
+                    }),
+                    signal: AbortSignal.timeout(5000),
+                });
+            } catch {
+                // Engine close is best-effort — Prisma is source of truth
+            }
+        }
+
+        return NextResponse.json({
+            success: true,
+            closed: [{
+                trade_id: trade.exchangeOrderId || trade.id,
+                symbol: trade.coin,
+                pnl: leveragedPnl,
+                pnl_pct: pnlPct,
+            }],
+        });
     } catch (error: any) {
         console.error('Trade close error:', error);
         return NextResponse.json({ error: 'Failed to close trade' }, { status: 500 });

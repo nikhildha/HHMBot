@@ -135,9 +135,11 @@ export async function getUserTrades(userId: string, statusFilter?: string) {
     });
 
     return trades.map(t => ({
+        id: t.id,
         trade_id: t.exchangeOrderId || t.id,
         symbol: t.coin,
         side: t.position === 'long' ? 'BUY' : 'SELL',
+        position: t.position,
         regime: t.regime,
         confidence: t.confidence,
         mode: t.mode,
@@ -150,6 +152,10 @@ export async function getUserTrades(userId: string, statusFilter?: string) {
         stop_loss: t.stopLoss,
         take_profit: t.takeProfit,
         sl_type: t.slType,
+        t1Hit: t.t1Hit,
+        t2Hit: t.t2Hit,
+        trailing_sl: t.trailingSl,
+        trailing_active: t.trailingActive,
         status: t.status.toUpperCase(),
         unrealized_pnl: t.activePnl,
         unrealized_pnl_pct: t.activePnlPercent,

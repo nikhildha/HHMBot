@@ -27,6 +27,21 @@ const pnlColor = (v: number) => v > 0 ? '#22C55E' : v < 0 ? '#EF4444' : '#6B7280
 
 /* ═══ Map raw engine trade to typed Trade ═══ */
 function mapTrade(t: any): Trade {
+  // Normalize status to exactly 'active' or 'closed'
+  const rawStatus = (t.status || '').toLowerCase().trim();
+  const hasExit = !!(t.exit_time || t.exit_timestamp || t.exitTime || t.exit_price || t.exitPrice);
+  const status = (rawStatus === 'active' && !hasExit) ? 'active' : (rawStatus === 'active' ? 'active' : 'closed');
+
+  // Determine SL type from engine data
+  const slType = t.sl_type || t.slType || 'Default';
+
+  // Determine current target level from engine data
+  const t1Hit = t.t1_hit || t.t1Hit || false;
+  const t2Hit = t.t2_hit || t.t2Hit || false;
+  let targetType = t.target_type || t.tp_type || t.targetType || 'T1';
+  if (t2Hit) targetType = 'T3';
+  else if (t1Hit) targetType = 'T2';
+
   return {
     id: t.trade_id || t.id || `T-${Math.random().toString(36).slice(2, 8)}`,
     coin: (t.symbol || t.coin || '').replace('USDT', ''),
@@ -39,11 +54,11 @@ function mapTrade(t: any): Trade {
     entryPrice: t.entry_price || t.entryPrice || 0,
     currentPrice: t.current_price || t.currentPrice || null,
     exitPrice: t.exit_price || t.exitPrice || null,
-    stopLoss: t.stop_loss || t.stopLoss || 0,
+    stopLoss: t.stop_loss || t.stopLoss || t.trailing_sl || t.trailingSl || 0,
     takeProfit: t.take_profit || t.takeProfit || 0,
-    slType: t.sl_type || t.slType || 'Default',
-    targetType: t.target_type || t.tp_type || t.targetType || 'T1',
-    status: (t.status || '').toLowerCase(),
+    slType: (t.trailing_active || t.trailingActive) ? `Trail (${slType})` : slType,
+    targetType,
+    status,
     mode: t.mode || 'paper',
     activePnl: t.unrealized_pnl || t.active_pnl || t.activePnl || 0,
     activePnlPercent: t.unrealized_pnl_pct || t.activePnlPercent || 0,
@@ -153,7 +168,7 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
       const tRegime = (t.regime || '').toLowerCase();
 
       if (statusFilter === 'active' && tStatus !== 'active') return false;
-      if (statusFilter === 'closed' && tStatus === 'active') return false;
+      if (statusFilter === 'closed' && tStatus !== 'closed') return false;
       if (modeFilter !== 'all' && tMode !== modeFilter) return false;
       if (posFilter !== 'all') {
         const posMatch = posFilter === 'long'
@@ -505,7 +520,7 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
                                 color: isActive ? '#22C55E' : '#6B7280',
                                 background: isActive ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
                               }}>
-                                {isActive ? '● LIVE' : t.exitReason || 'CLOSED'}
+                                {isActive ? '● ACTIVE' : t.exitReason || 'CLOSED'}
                               </span>
                             </td>
 
@@ -520,7 +535,7 @@ export function TradesClient({ trades: initialTrades }: TradesClientProps) {
                                       const res = await fetch('/api/trades/close', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ tradeId: t.id }),
+                                        body: JSON.stringify({ tradeId: t.id, symbol: t.symbol }),
                                       });
                                       if (res.ok) {
                                         window.location.reload();
