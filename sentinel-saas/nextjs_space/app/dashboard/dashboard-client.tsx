@@ -246,7 +246,7 @@ export function DashboardClient({ user, stats, bots, recentTrades }: DashboardCl
               gap: '20px',
             }}>
               <RegimeCard regime={regime} confidence={confidence} symbol={symbol} macroRegime={macroRegime} trend15m={trend15m} coinStates={multi?.coin_states} />
-              <PnlCard trades={trades} btcPrice={btcState?.price || multi?.coin_states?.['BTCUSDT']?.price} />
+              <PnlCard trades={trades} />
             </div>
           </motion.div>
 

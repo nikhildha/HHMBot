@@ -1,11 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     Bot, Power, PowerOff, RefreshCw, Play, Pause, Trash2,
     Activity, Clock, AlertTriangle, CheckCircle2, XCircle,
-    Cpu, Zap, Signal
+    Cpu, Zap, Signal, Terminal, Loader2
 } from 'lucide-react';
+
+// ─── Local Engine State ──────────────────────────────────────────────────────
+
+interface EngineState {
+    status: 'running' | 'stopped' | 'unknown';
+    pid: number | null;
+    uptime: string | null;
+    logs: string[];
+}
+
+// ─── Bot / Orchestrator types (existing) ─────────────────────────────────────
 
 interface BotInfo {
     id: string;
@@ -17,27 +28,74 @@ interface BotInfo {
     _count: { trades: number };
 }
 
-interface WorkerStatus {
-    botId: string;
-    status: 'running' | 'stopped' | 'error' | 'starting';
-    pid?: number;
-    uptime?: string;
-    lastHeartbeat?: string;
-    memoryMb?: number;
-    errorMessage?: string;
-}
-
 export default function EngineControl() {
+    // Local engine state
+    const [engine, setEngine] = useState<EngineState>({
+        status: 'unknown', pid: null, uptime: null, logs: [],
+    });
+    const [engineActionLoading, setEngineActionLoading] = useState(false);
+    const logRef = useRef<HTMLDivElement>(null);
+
+    // Existing bot list (orchestrator)
     const [bots, setBots] = useState<BotInfo[]>([]);
-    const [workerStatuses, setWorkerStatuses] = useState<Map<string, WorkerStatus>>(new Map());
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [orchestratorOnline, setOrchestratorOnline] = useState(false);
 
     useEffect(() => {
+        fetchEngineStatus();
         fetchBots();
         checkOrchestrator();
     }, []);
+
+    // Auto-poll engine status every 5s when running
+    useEffect(() => {
+        if (engine.status !== 'running') return;
+        const interval = setInterval(fetchEngineStatus, 5000);
+        return () => clearInterval(interval);
+    }, [engine.status]);
+
+    // Auto-scroll logs
+    useEffect(() => {
+        if (logRef.current) {
+            logRef.current.scrollTop = logRef.current.scrollHeight;
+        }
+    }, [engine.logs]);
+
+    // ─── Local Engine Actions ────────────────────────────────────────────────
+
+    const fetchEngineStatus = async () => {
+        try {
+            const res = await fetch('/api/admin/engine');
+            if (res.ok) {
+                const data = await res.json();
+                setEngine(data);
+            }
+        } catch {
+            setEngine(prev => ({ ...prev, status: 'unknown' }));
+        }
+    };
+
+    const controlEngine = async (action: 'start' | 'stop') => {
+        setEngineActionLoading(true);
+        try {
+            const res = await fetch('/api/admin/engine', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action }),
+            });
+            if (res.ok) {
+                // Wait a moment for process to spin up / down, then refresh
+                await new Promise(r => setTimeout(r, 1500));
+                await fetchEngineStatus();
+            }
+        } catch (e) {
+            console.error(`Failed to ${action} engine:`, e);
+        }
+        setEngineActionLoading(false);
+    };
+
+    // ─── Existing Orchestrator / Bot Actions ─────────────────────────────────
 
     const fetchBots = async () => {
         setLoading(true);
@@ -77,19 +135,122 @@ export default function EngineControl() {
     const activeBots = bots.filter(b => b.isActive);
     const inactiveBots = bots.filter(b => !b.isActive);
 
+    const isRunning = engine.status === 'running';
+
     return (
         <div className="space-y-6">
-            {/* Orchestrator Status */}
+            {/* ═══ LOCAL ENGINE CARD ═══════════════════════════════════════════ */}
+            <div className={`rounded-2xl border-2 p-6 transition-all ${isRunning
+                    ? 'bg-green-500/5 border-green-500/30 shadow-lg shadow-green-500/5'
+                    : 'bg-white/5 border-white/10'
+                }`}>
+                <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isRunning ? 'bg-green-500/15' : 'bg-gray-500/10'
+                            }`}>
+                            <Cpu className={`w-6 h-6 ${isRunning ? 'text-green-400' : 'text-gray-500'}`} />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <h2 className="text-xl font-bold text-white">Local Engine</h2>
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-2.5 h-2.5 rounded-full ${isRunning ? 'bg-green-400 animate-pulse' : 'bg-gray-500'
+                                        }`} />
+                                    <span className={`text-sm font-medium ${isRunning ? 'text-green-400' : 'text-gray-400'
+                                        }`}>
+                                        {isRunning ? 'Running' : engine.status === 'unknown' ? 'Checking...' : 'Stopped'}
+                                    </span>
+                                </div>
+                            </div>
+                            <p className="text-gray-500 text-sm mt-0.5">
+                                {isRunning
+                                    ? `PID ${engine.pid} · Uptime: ${engine.uptime || '—'}`
+                                    : 'main.py — RegimeMaster Bot'
+                                }
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={fetchEngineStatus}
+                            className="p-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition"
+                            title="Refresh status"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                        </button>
+
+                        {isRunning ? (
+                            <button
+                                onClick={() => controlEngine('stop')}
+                                disabled={engineActionLoading}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition font-medium disabled:opacity-50"
+                            >
+                                {engineActionLoading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <PowerOff className="w-4 h-4" />
+                                )}
+                                Stop Engine
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => controlEngine('start')}
+                                disabled={engineActionLoading || engine.status === 'unknown'}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition font-medium disabled:opacity-50"
+                            >
+                                {engineActionLoading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Play className="w-4 h-4" />
+                                )}
+                                Start Engine
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Log Console */}
+                {engine.logs.length > 0 && (
+                    <div className="mt-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Terminal className="w-3.5 h-3.5 text-gray-500" />
+                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Engine Logs</span>
+                        </div>
+                        <div
+                            ref={logRef}
+                            className="bg-black/40 border border-white/5 rounded-xl p-4 max-h-48 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5"
+                        >
+                            {engine.logs.map((line, i) => (
+                                <div key={i} className={
+                                    line.includes('ERROR') || line.includes('⚠️')
+                                        ? 'text-red-400'
+                                        : line.includes('🚀') || line.includes('✅') || line.includes('🔥')
+                                            ? 'text-green-400'
+                                            : line.includes('🧠') || line.includes('📊')
+                                                ? 'text-blue-400'
+                                                : 'text-gray-400'
+                                }>
+                                    {line}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* ═══ ORCHESTRATOR STATUS (existing) ═════════════════════════════ */}
             <div className={`flex items-center justify-between p-4 rounded-xl border ${orchestratorOnline
-                    ? 'bg-green-500/5 border-green-500/20'
-                    : 'bg-red-500/5 border-red-500/20'
+                ? 'bg-green-500/5 border-green-500/20'
+                : 'bg-red-500/5 border-red-500/20'
                 }`}>
                 <div className="flex items-center gap-3">
                     <div className={`w-3 h-3 rounded-full ${orchestratorOnline ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
                     <div>
                         <p className="text-white font-medium">Python Orchestrator</p>
                         <p className="text-gray-400 text-sm">
-                            {orchestratorOnline ? 'Connected on port 5000' : 'Offline — start with: python orchestrator_api.py'}
+                            {orchestratorOnline ? 'Connected on port 5000' : 'Offline — not needed for local dev'}
                         </p>
                     </div>
                 </div>
@@ -136,8 +297,8 @@ export default function EngineControl() {
                                         <div className="flex items-center gap-2">
                                             <p className="text-white font-medium">{bot.name}</p>
                                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${bot.isActive
-                                                    ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                                                    : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                                                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                                : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
                                                 }`}>
                                                 {bot.isActive ? 'Active' : 'Stopped'}
                                             </span>

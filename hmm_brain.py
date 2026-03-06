@@ -1,7 +1,10 @@
 """
 Project Regime-Master — HMM Brain
 Gaussian Hidden Markov Model for market regime classification.
-States: Bull (0), Bear (1), Chop (2), Crash (3)
+States: Bull (0), Bear (1), Chop (2)  — 3-state model (CRASH merged into BEAR)
+
+Confidence: margin = best_prob - 2nd_best_prob (replaces raw max-posterior,
+which was always 99%+ regardless of actual accuracy — completely uncalibrated).
 """
 import numpy as np
 import logging
@@ -155,7 +158,12 @@ class HMMBrain:
         probs = self.model.predict_proba(features_scaled)[-1]
 
         canonical = self._state_map.get(raw_state, config.REGIME_CHOP)
-        confidence = float(np.max(probs))
+
+        # Margin confidence: best_prob - 2nd_best_prob (range 0.0–1.0).
+        # Raw max-posterior was always 99%+ regardless of accuracy (uncalibrated).
+        # Margin measures decisiveness: 0=uncertain, 1=extremely confident.
+        sorted_p = np.sort(probs)[::-1]
+        confidence = float(sorted_p[0] - sorted_p[1]) if len(sorted_p) >= 2 else float(sorted_p[0])
 
         return canonical, confidence
 

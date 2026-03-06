@@ -121,7 +121,8 @@ class TestRiskManagerScoring(unittest.TestCase):
         self.assertAlmostEqual(score, expected, places=5)
 
     def test_score_hmm_below_minimum_returns_zero(self):
-        score = self.RM._score_hmm(0.80)
+        # HMM_CONF_TIER_LOW = 0.10 (margin scale); anything below returns 0
+        score = self.RM._score_hmm(0.05)
         self.assertEqual(score, 0.0)
 
     def test_score_hmm_zero_confidence(self):
@@ -131,6 +132,11 @@ class TestRiskManagerScoring(unittest.TestCase):
     def test_score_hmm_always_nonnegative(self):
         for conf in [0.0, 0.5, 0.85, 0.90, 0.94, 0.97, 1.0]:
             self.assertGreaterEqual(self.RM._score_hmm(conf), 0.0)
+
+    def test_score_hmm_none_confidence_returns_zero(self):
+        # Validates the production None guard — prevents TypeError when HMM predict fails
+        score = self.RM._score_hmm(None)
+        self.assertEqual(score, 0.0)
 
     # ── A2: _score_btc_macro ─────────────────────────────────────────────────
 
@@ -637,8 +643,7 @@ class TestDataPipelineUnit(unittest.TestCase):
 
     def _make_sample_klines(self, n=5):
         """Generate a list of raw Binance kline rows."""
-        import time as _time
-        now_ms = int(_time.time() * 1000)
+        now_ms = 1_609_459_200_000  # Fixed: 2021-01-01 00:00:00 UTC (deterministic)
         rows = []
         for i in range(n):
             ts = now_ms - (n - i) * 60000
@@ -920,6 +925,282 @@ class TestSentimentEngineUnit(unittest.TestCase):
             momentum=0.1, alert=True, alert_reason="hack detected", fear_greed=None
         )
         self.assertEqual(signal.effective_score, -1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Phase H: HMMBrain — Training, Prediction, State Map
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestHMMBrainUnit(unittest.TestCase):
+    """Unit tests for HMMBrain using synthetic feature DataFrames (no API calls)."""
+
+    @staticmethod
+    def _make_hmm_df(n=200, seed=42):
+        """Synthetic DataFrame with the 4 HMM_FEATURES columns."""
+        np.random.seed(seed)
+        # Two regime halves: bull-like returns then bear-like returns
+        log_returns = np.concatenate([
+            np.random.normal(+0.006, 0.010, n // 2),   # bull half
+            np.random.normal(-0.006, 0.018, n // 2),   # bear half
+        ])
+        volatility = np.abs(log_returns) * 1.2 + np.abs(np.random.normal(0, 0.001, n))
+        volume_change = np.random.normal(0, 0.08, n)
+        rsi_norm = np.clip(np.random.normal(0.5, 0.15, n), 0.0, 1.0)
+        return pd.DataFrame({
+            "log_return":    log_returns,
+            "volatility":    volatility,
+            "volume_change": volume_change,
+            "rsi_norm":      rsi_norm,
+        })
+
+    def setUp(self):
+        from hmm_brain import HMMBrain
+        self.HMMBrain = HMMBrain
+
+    # ── H1: untrained state ──────────────────────────────────────────────────
+
+    def test_untrained_predict_returns_chop_zero(self):
+        brain = self.HMMBrain()
+        df = self._make_hmm_df(20)
+        state, conf = brain.predict(df)
+        self.assertEqual(state, config.REGIME_CHOP)
+        self.assertEqual(conf, 0.0)
+
+    def test_untrained_is_trained_false(self):
+        brain = self.HMMBrain()
+        self.assertFalse(brain.is_trained)
+
+    def test_untrained_needs_retrain_true(self):
+        brain = self.HMMBrain()
+        self.assertTrue(brain.needs_retrain())
+
+    def test_untrained_predict_all_returns_chop_array(self):
+        brain = self.HMMBrain()
+        df = self._make_hmm_df(10)
+        states = brain.predict_all(df)
+        self.assertTrue(all(s == config.REGIME_CHOP for s in states))
+
+    # ── H2: after training ───────────────────────────────────────────────────
+
+    def test_train_sets_is_trained(self):
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        self.assertTrue(brain.is_trained)
+
+    def test_not_needs_retrain_right_after_training(self):
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        self.assertFalse(brain.needs_retrain())
+
+    def test_predict_confidence_in_0_1(self):
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        _, conf = brain.predict(self._make_hmm_df())
+        self.assertGreaterEqual(conf, 0.0)
+        self.assertLessEqual(conf, 1.0)
+
+    def test_predict_returns_valid_regime(self):
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        state, _ = brain.predict(self._make_hmm_df())
+        self.assertIn(state, [config.REGIME_BULL, config.REGIME_BEAR,
+                               config.REGIME_CHOP, config.REGIME_CRASH])
+
+    def test_predict_all_length_matches_input(self):
+        brain = self.HMMBrain()
+        df = self._make_hmm_df(100)
+        brain.train(df)
+        states = brain.predict_all(df)
+        self.assertEqual(len(states), len(df))
+
+    def test_predict_all_values_are_valid_regimes(self):
+        brain = self.HMMBrain()
+        df = self._make_hmm_df(100)
+        brain.train(df)
+        states = brain.predict_all(df)
+        valid = {config.REGIME_BULL, config.REGIME_BEAR,
+                 config.REGIME_CHOP, config.REGIME_CRASH}
+        self.assertTrue(set(states).issubset(valid))
+
+    # ── H3: state_map correctness (validates the HMM_FEATURES fix) ──────────
+
+    def test_state_map_has_all_3_regimes(self):
+        # 3-state model: BULL, CHOP, BEAR (CRASH merged into BEAR — removed)
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        self.assertEqual(len(brain._state_map), 3)
+        self.assertEqual(
+            set(brain._state_map.values()),
+            {config.REGIME_BULL, config.REGIME_BEAR, config.REGIME_CHOP},
+        )
+
+    def test_bull_state_has_higher_log_return_than_bear(self):
+        """Core correctness check: log_return is col 0, so BULL > BEAR by mean."""
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df())
+        bull_raw = [k for k, v in brain._state_map.items() if v == config.REGIME_BULL][0]
+        bear_raw = [k for k, v in brain._state_map.items() if v == config.REGIME_BEAR][0]
+        self.assertGreater(brain.model.means_[bull_raw][0],
+                           brain.model.means_[bear_raw][0])
+
+    # ── H4: regime name mapping ───────────────────────────────────────────────
+
+    def test_get_regime_name_bull(self):
+        brain = self.HMMBrain()
+        self.assertEqual(brain.get_regime_name(config.REGIME_BULL), "BULLISH")
+
+    def test_get_regime_name_bear(self):
+        brain = self.HMMBrain()
+        self.assertEqual(brain.get_regime_name(config.REGIME_BEAR), "BEARISH")
+
+    def test_get_regime_name_chop(self):
+        brain = self.HMMBrain()
+        self.assertEqual(brain.get_regime_name(config.REGIME_CHOP), "SIDEWAYS/CHOP")
+
+    def test_get_regime_name_crash(self):
+        brain = self.HMMBrain()
+        self.assertEqual(brain.get_regime_name(config.REGIME_CRASH), "CRASH/PANIC")
+
+    # ── H5: edge cases ────────────────────────────────────────────────────────
+
+    def test_insufficient_data_does_not_train(self):
+        brain = self.HMMBrain()
+        brain.train(self._make_hmm_df(20))  # well below min threshold
+        self.assertFalse(brain.is_trained)
+
+    def test_train_with_nan_rows_does_not_crash(self):
+        brain = self.HMMBrain()
+        df = self._make_hmm_df(200)
+        df.iloc[10:15] = np.nan  # inject NaNs
+        brain.train(df)  # should drop NaNs and train normally
+        self.assertTrue(brain.is_trained)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Phase I: CoinScanner — Filtering, Sorting, Routing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCoinScannerUnit(unittest.TestCase):
+    """Unit tests for coin_scanner functions — no real API calls."""
+
+    def _make_ticker(self, symbol, volume):
+        return {"symbol": symbol, "quoteVolume": str(volume)}
+
+    # ── I1: COIN_EXCLUDE filtering ───────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_excluded_coins_not_in_results(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker("BTCUSDT",  1_000_000),
+            self._make_ticker("ETHUSDT",    800_000),
+            self._make_ticker("EURUSDT",    500_000),   # excluded
+            self._make_ticker("WBTCUSDT",   900_000),   # excluded
+            self._make_ticker("USDCUSDT",   700_000),   # excluded
+        ]
+        result = _get_top_coins_binance(limit=10)
+        self.assertIn("BTCUSDT", result)
+        self.assertIn("ETHUSDT", result)
+        self.assertNotIn("EURUSDT", result)
+        self.assertNotIn("WBTCUSDT", result)
+        self.assertNotIn("USDCUSDT", result)
+
+    # ── I2: leverage token filtering ────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_leverage_tokens_filtered_out(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker("BTCUSDT",     1_000_000),
+            self._make_ticker("BTCUPUSDT",     900_000),   # UP token
+            self._make_ticker("BTCDOWNUSDT",   800_000),   # DOWN token
+            self._make_ticker("ETHBULLUSDT",   700_000),   # BULL token
+            self._make_ticker("ETHBEARUSDT",   600_000),   # BEAR token
+        ]
+        result = _get_top_coins_binance(limit=10)
+        self.assertIn("BTCUSDT", result)
+        self.assertNotIn("BTCUPUSDT", result)
+        self.assertNotIn("BTCDOWNUSDT", result)
+        self.assertNotIn("ETHBULLUSDT", result)
+        self.assertNotIn("ETHBEARUSDT", result)
+
+    # ── I3: volume sort order ────────────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_results_sorted_by_volume_descending(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker("LTCUSDT",  100_000),
+            self._make_ticker("BTCUSDT", 1_000_000),
+            self._make_ticker("ETHUSDT",  500_000),
+        ]
+        result = _get_top_coins_binance(limit=10)
+        self.assertEqual(result[0], "BTCUSDT")
+        self.assertEqual(result[1], "ETHUSDT")
+        self.assertEqual(result[2], "LTCUSDT")
+
+    # ── I4: limit respected ──────────────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_limit_caps_result_length(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker(f"COIN{i:02d}USDT", 10_000 - i * 100)
+            for i in range(20)
+        ]
+        result = _get_top_coins_binance(limit=5)
+        self.assertEqual(len(result), 5)
+
+    # ── I5: only USDT pairs ──────────────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_only_usdt_pairs_returned(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker("BTCUSDT", 1_000_000),
+            self._make_ticker("BTCBTC",    900_000),   # non-USDT
+            self._make_ticker("ETHBNB",    800_000),   # non-USDT
+            self._make_ticker("ETHUSDT",   700_000),
+        ]
+        result = _get_top_coins_binance(limit=10)
+        for sym in result:
+            self.assertTrue(sym.endswith("USDT"), f"{sym} should end with USDT")
+
+    # ── I6: API failure fallback ─────────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_api_error_returns_primary_symbol(self, mock_get_client):
+        from coin_scanner import _get_top_coins_binance
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.side_effect = Exception("Connection timeout")
+        result = _get_top_coins_binance(limit=10)
+        self.assertEqual(result, [config.PRIMARY_SYMBOL])
+
+    # ── I7: routing ──────────────────────────────────────────────────────────
+
+    @patch("coin_scanner._get_binance_client")
+    def test_paper_mode_routes_to_binance(self, mock_get_client):
+        from coin_scanner import get_top_coins_by_volume
+        client = MagicMock()
+        mock_get_client.return_value = client
+        client.get_ticker.return_value = [
+            self._make_ticker("BTCUSDT", 1_000_000)
+        ]
+        with patch.object(config, "PAPER_TRADE", True):
+            result = get_top_coins_by_volume(limit=5)
+        self.assertIsInstance(result, list)
+        client.get_ticker.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

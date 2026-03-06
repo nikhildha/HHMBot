@@ -29,6 +29,40 @@ COIN_EXCLUDE = {
     "USTUSDT", "DAIUSDT", "FDUSDUSDT", "CVCUSDT", "USD1USDT",
 }
 
+# ─── Coin tier cache (loaded once from data/coin_tiers.csv) ──────────────────
+_coin_tiers: dict = {}   # symbol → {"tier": "A"|"B"|"C", "pattern": str}
+
+def _load_coin_tiers():
+    """Load coin tier classifications from disk (Tier A/B/C from calibration experiment)."""
+    global _coin_tiers
+    if _coin_tiers or not os.path.exists(config.COIN_TIER_FILE):
+        return
+    try:
+        df = pd.read_csv(config.COIN_TIER_FILE)
+        for _, row in df.iterrows():
+            _coin_tiers[row["symbol"]] = {
+                "tier":    row.get("tier", "B"),
+                "pattern": row.get("pattern", "RANDOM"),
+            }
+        logger.info("Loaded coin tiers: %d Tier A, %d Tier B, %d Tier C.",
+                    sum(1 for v in _coin_tiers.values() if v["tier"] == "A"),
+                    sum(1 for v in _coin_tiers.values() if v["tier"] == "B"),
+                    sum(1 for v in _coin_tiers.values() if v["tier"] == "C"))
+    except Exception as e:
+        logger.warning("Could not load coin tiers from %s: %s", config.COIN_TIER_FILE, e)
+
+
+def get_tier_a_whitelist() -> list:
+    """Return list of Tier A symbols (stable forward Sharpe ≥ 1.0)."""
+    _load_coin_tiers()
+    return [sym for sym, info in _coin_tiers.items() if info["tier"] == "A"]
+
+
+def get_coin_tier(symbol: str) -> str:
+    """Return 'A', 'B', or 'C' tier for a symbol. Returns 'B' if unknown."""
+    _load_coin_tiers()
+    return _coin_tiers.get(symbol, {}).get("tier", "B")
+
 
 def _get_top_coins_binance(limit=50, quote="USDT"):
     """Fetch top coins from Binance by 24h quote volume (paper mode)."""
@@ -93,14 +127,36 @@ def get_top_coins_by_volume(limit=50, quote="USDT"):
       Paper mode → Binance
       Live mode  → CoinDCX Futures
 
+    Applies coin tier filter: Tier C (historically unprofitable) coins are
+    removed. Tier A coins are sorted to the front of the list.
+
     Returns
     -------
     list[str] — Binance-style symbols, e.g. ['BTCUSDT', 'ETHUSDT', ...]
     """
+    _load_coin_tiers()
+
     if config.PAPER_TRADE:
-        return _get_top_coins_binance(limit=limit, quote=quote)
+        symbols = _get_top_coins_binance(limit=limit * 2, quote=quote)
     else:
-        return _get_top_coins_coindcx(limit=limit)
+        symbols = _get_top_coins_coindcx(limit=limit * 2)
+
+    if _coin_tiers:
+        # Remove Tier C (chronically unprofitable) coins
+        tier_c = {s for s, info in _coin_tiers.items() if info["tier"] == "C"}
+        removed = [s for s in symbols if s in tier_c]
+        symbols = [s for s in symbols if s not in tier_c]
+        if removed:
+            logger.info("Coin tier filter: excluded %d Tier C coins: %s", len(removed), removed[:5])
+
+        # Sort: Tier A first, then B, then unranked — preserve relative volume order within each tier
+        tier_a = {s for s, info in _coin_tiers.items() if info["tier"] == "A"}
+        symbols = (
+            [s for s in symbols if s in tier_a] +
+            [s for s in symbols if s not in tier_a]
+        )
+
+    return symbols[:limit]
 
 
 def scan_all_regimes(symbols=None, limit=50, timeframe="1h", kline_limit=500):
@@ -146,6 +202,7 @@ def scan_all_regimes(symbols=None, limit=50, timeframe="1h", kline_limit=500):
                 "confidence": round(conf, 4),
                 "price":      round(float(df["close"].iloc[-1]), 4),
                 "volume_24h": round(float(df["volume"].sum()), 2),
+                "tier":       get_coin_tier(symbol),
                 "timestamp":  datetime.utcnow().isoformat(),
             })
 

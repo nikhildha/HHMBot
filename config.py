@@ -38,7 +38,7 @@ TIMEFRAME_CONFIRMATION = "1h" # Trend confirmation
 TIMEFRAME_MACRO = "4h"        # Macro regime
 
 # ─── HMM Brain ──────────────────────────────────────────────────────────────────
-HMM_N_STATES = 4              # Bull, Bear, Chop, Crash
+HMM_N_STATES = 3              # Bull, Chop, Bear (3-state — CRASH merged into BEAR: 10.9% accuracy, worse than random)
 HMM_COVARIANCE = "full"       # Optimized: captures cross-feature correlations
 HMM_ITERATIONS = 100
 HMM_LOOKBACK = 250            # Candles used for training (reduced for speed)
@@ -48,7 +48,7 @@ HMM_RETRAIN_HOURS = 24        # Retrain every N hours
 REGIME_BULL = 0
 REGIME_BEAR = 1
 REGIME_CHOP = 2
-REGIME_CRASH = 3
+REGIME_CRASH = 3              # Legacy — unused with HMM_N_STATES=3 (kept for backtester compat)
 
 REGIME_NAMES = {
     REGIME_BULL:  "BULLISH",
@@ -163,13 +163,13 @@ RSI_OVERBOUGHT = 65
 SIDEWAYS_POSITION_REDUCTION = 0.30  # 30% smaller positions in chop
 
 # ─── Bot Loop ────────────────────────────────────────────────────────────────────
-LOOP_INTERVAL_SECONDS = 60        # 1-minute heartbeat (checks commands, updates state)
+LOOP_INTERVAL_SECONDS = 30        # 30-second heartbeat (checks commands, updates state)
 ANALYSIS_INTERVAL_SECONDS = 300   # 5-minute full analysis cycle (HMM scan, trades)
 ERROR_RETRY_SECONDS = 60          # Retry after error
 
 # ─── Multi-Coin Trading ──────────────────────────────────────────────────────────
 MAX_CONCURRENT_POSITIONS = 15   # Max symbols traded at once
-TOP_COINS_LIMIT = 15            # How many coins to scan (reduced from 50 for speed)
+TOP_COINS_LIMIT = 25            # How many coins to scan by volume
 CAPITAL_PER_COIN_PCT = 0.05     # 5% of balance per coin (max 15 = 75% deployed)
 SCAN_INTERVAL_CYCLES = 4        # Re-scan top coins every N analysis cycles (4 × 15m = 1h)
 MULTI_COIN_MODE = True          # Enable multi-coin scanning
@@ -220,6 +220,9 @@ SENTIMENT_RSS_FEEDS      = [
 ]
 SENTIMENT_LOG_FILE       = os.path.join(DATA_DIR, "sentiment_log.csv")
 
+# ─── Coin Tiers (from experiment_3state_calibration.py evaluation) ────────────
+COIN_TIER_FILE = os.path.join(DATA_DIR, "coin_tiers.csv")  # Tier A/B/C classification
+
 # ─── Order Flow Engine ────────────────────────────────────────────────────────
 ORDERFLOW_ENABLED          = True
 ORDERFLOW_CACHE_SECONDS    = 60        # Cache orderflow snapshot per coin (60s)
@@ -257,10 +260,13 @@ CONVICTION_FLOW_MILD_PENALTY       = 3    # Mild opposing order flow
 CONVICTION_FLOW_STRONG_PENALTY     = 7    # Strong opposing order flow
 
 # ─── Conviction Score: HMM Confidence Tiers ──────────────────────────────────
-HMM_CONF_TIER_HIGH     = 0.97   # Full weight (100%)
-HMM_CONF_TIER_MED_HIGH = 0.94   # 85% weight
-HMM_CONF_TIER_MED      = 0.90   # 65% weight
-HMM_CONF_TIER_LOW      = 0.85   # 40% weight (below = no contribution)
+# Uses MARGIN confidence: best_prob - 2nd_best_prob (range 0.0–1.0)
+# Replaces raw max-posterior which was always 99%+ (uncalibrated).
+# Experiment results: 3-state+margin Sharpe +1.22 vs 4-state+raw +0.72
+HMM_CONF_TIER_HIGH     = 0.60   # Margin > 0.60 → full weight (100%)
+HMM_CONF_TIER_MED_HIGH = 0.40   # Margin > 0.40 → 85% weight
+HMM_CONF_TIER_MED      = 0.25   # Margin > 0.25 → 65% weight
+HMM_CONF_TIER_LOW      = 0.10   # Margin > 0.10 → 40% weight (below = no contribution)
 
 # ─── Conviction Score: Funding Rate Thresholds ───────────────────────────────
 FUNDING_NEG_STRONG =  -0.0001  # Below: longs paid → BUY favorable (full score)

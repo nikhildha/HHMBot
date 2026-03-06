@@ -168,10 +168,9 @@ export function RegimeCard({ regime, confidence, symbol, macroRegime, trend15m, 
 
 interface PnlCardProps {
     trades: any[];
-    btcPrice?: number;
 }
 
-export function PnlCard({ trades, btcPrice }: PnlCardProps) {
+export function PnlCard({ trades }: PnlCardProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const chartRef = useRef<any>(null);
     const MAX_CAPITAL = 2500;
@@ -343,30 +342,20 @@ export function PnlCard({ trades, btcPrice }: PnlCardProps) {
             backdropFilter: 'blur(12px)',
             border: '1px solid rgba(255,255,255,0.06)',
             borderRadius: '16px',
-            padding: '24px 28px',
+            padding: '20px 24px',
         }}>
             {/* Header: PNL headline */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                <div>
-                    <div style={{
-                        fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' as const,
-                        letterSpacing: '1.5px', color: '#9CA3AF', marginBottom: '4px',
-                    }}>P&L Timeline</div>
-                    <div style={{ fontSize: '32px', fontWeight: 700, color: mainColor }}>
-                        {sign}${totalPnl.toFixed(2)}
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#9CA3AF', marginTop: '2px' }}>
-                        {sign}{totalRoi.toFixed(2)}% ROI on ${MAX_CAPITAL}
-                    </div>
+            <div style={{ marginBottom: '12px' }}>
+                <div style={{
+                    fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' as const,
+                    letterSpacing: '1.5px', color: '#9CA3AF', marginBottom: '4px',
+                }}>P&L Timeline</div>
+                <div style={{ fontSize: '32px', fontWeight: 700, color: mainColor }}>
+                    {sign}${totalPnl.toFixed(2)}
                 </div>
-                {btcPrice && (
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '9px', textTransform: 'uppercase' as const, letterSpacing: '1px', color: '#6B7280' }}>BTC Price</div>
-                        <div style={{ fontSize: '18px', fontWeight: 700, color: '#F59E0B', fontFamily: 'monospace' }}>
-                            ${Number(btcPrice).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                        </div>
-                    </div>
-                )}
+                <div style={{ fontSize: '11px', color: '#9CA3AF', marginTop: '2px' }}>
+                    {sign}{totalRoi.toFixed(2)}% ROI on ${MAX_CAPITAL}
+                </div>
             </div>
 
             {/* Chart Canvas */}
